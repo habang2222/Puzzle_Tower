@@ -467,7 +467,9 @@ h3 {
 .custom {
   border-color: var(--custom-color, var(--magenta));
   background: var(--custom-color, var(--magenta));
+  color: #fff;
   box-shadow: 0 0 18px rgba(255, 79, 216, 0.24);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
 }
 
 .player {
@@ -757,8 +759,43 @@ h3 {
   background: var(--panel);
 }
 
+.block-panel-title,
+.block-guide-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .block-code {
   min-height: 190px;
+}
+
+.image-upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: #242b35;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .block-list {
@@ -801,6 +838,78 @@ h3 {
 .block-actions button {
   min-height: 38px;
   padding: 0;
+}
+
+.block-guide-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(5, 8, 12, 0.76);
+  backdrop-filter: blur(12px);
+}
+
+.block-guide-dialog {
+  display: grid;
+  gap: 16px;
+  width: min(100%, 980px);
+  max-height: min(86vh, 820px);
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11161d;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.block-guide-header h2,
+.block-guide-header p {
+  margin: 0;
+}
+
+.block-guide-header button {
+  width: 42px;
+  min-height: 42px;
+  padding: 0;
+}
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.guide-grid section {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #151b23;
+}
+
+.guide-grid h3,
+.guide-grid p {
+  margin: 0;
+}
+
+.guide-grid p {
+  color: var(--text-soft);
+}
+
+.guide-grid pre {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #303947;
+  border-radius: 8px;
+  color: #c9fbff;
+  background: #0b0f14;
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
 .admin-grid {
@@ -917,6 +1026,10 @@ h3 {
     background: rgba(17, 19, 23, 0.9);
     backdrop-filter: blur(12px);
   }
+
+  .guide-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 520px) {
@@ -958,6 +1071,12 @@ h3 {
   .block-actions {
     grid-column: 1 / -1;
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .block-panel-title,
+  .block-guide-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

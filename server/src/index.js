@@ -749,7 +749,7 @@ function normalizeCustomBlocks(blocks) {
 
   const usedTiles = new Set();
   const normalized = [];
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway']);
   const reservedTiles = new Set(['.', '#', 'P', 'G', 'K', 'L', 'A', 'B']);
 
   for (const rawBlock of blocks.slice(0, 12)) {
@@ -760,10 +760,19 @@ function normalizeCustomBlocks(blocks) {
 
     const tile = String(code.tile || rawBlock?.tile || '').trim().slice(0, 1);
     const name = String(code.name || rawBlock?.name || '').trim().slice(0, 24);
-    const effect = String(code.effect || rawBlock?.effect || 'slow').trim();
+    const effect = String(code.effect || rawBlock?.effect || 'slow').trim().toLowerCase();
     const color = String(code.color || rawBlock?.color || '#a78bfa').trim();
     const moveCost = clamp(Number(code.moveCost ?? rawBlock?.moveCost ?? rawBlock?.move_cost ?? 2), 1, 9);
     const message = String(code.message || rawBlock?.message || '').trim().slice(0, 80);
+    const failMessage = String(code.failMessage || rawBlock?.failMessage || '').trim().slice(0, 80);
+    const exitFailMessage = String(code.exitFailMessage || rawBlock?.exitFailMessage || '').trim().slice(0, 80);
+    const outDirection = normalizeDirection(code.outDirection || code.exitDirection || rawBlock?.outDirection || rawBlock?.exitDirection || '');
+    const image = normalizeBlockImage(code.image || code.imageData || rawBlock?.image || rawBlock?.imageData || '');
+    const requires = normalizeCondition(code.requires || code.require || rawBlock?.requires || rawBlock?.require || null);
+    const rules = normalizeRules(code.if || code.rules || rawBlock?.if || rawBlock?.rules || []);
+    const consumeOnUse = code.consumeOnUse === true || rawBlock?.consumeOnUse === true;
+    const giveKey = code.giveKey === true || rawBlock?.giveKey === true;
+    const takeKey = code.takeKey === true || rawBlock?.takeKey === true;
     const isPublic = rawBlock?.isPublic !== false && rawBlock?.is_public !== 0;
 
     if (!/^[C-Z]$/.test(tile) || reservedTiles.has(tile)) {
@@ -778,11 +787,40 @@ function normalizeCustomBlocks(blocks) {
     if (!allowedEffects.has(effect)) {
       return { ok: false, message: '지원하지 않는 블록 효과입니다.' };
     }
+    if ((effect === 'force' || effect === 'oneway') && !outDirection) {
+      return { ok: false, message: 'force/oneway 효과에는 outDirection이 필요합니다.' };
+    }
     if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
       return { ok: false, message: '블록 색상은 #RRGGBB 형식이어야 합니다.' };
     }
+    if (image === null) {
+      return { ok: false, message: '이미지는 180KB 이하의 png, jpg, webp, gif data URL만 사용할 수 있습니다.' };
+    }
+    if (!requires.ok) {
+      return { ok: false, message: requires.message };
+    }
+    if (!rules.ok) {
+      return { ok: false, message: rules.message };
+    }
 
     usedTiles.add(tile);
+    const codeData = {
+      name,
+      tile,
+      color,
+      effect,
+      moveCost,
+      message,
+      failMessage,
+      exitFailMessage,
+      image,
+      outDirection,
+      requires: requires.condition,
+      consumeOnUse,
+      giveKey,
+      takeKey,
+      if: rules.rules
+    };
     normalized.push({
       name,
       tile,
@@ -790,12 +828,114 @@ function normalizeCustomBlocks(blocks) {
       effect,
       moveCost,
       message,
+      failMessage,
+      exitFailMessage,
+      image,
+      outDirection,
+      requires: requires.condition,
+      consumeOnUse,
+      giveKey,
+      takeKey,
+      rules: rules.rules,
       isPublic,
-      code: { name, tile, color, effect, moveCost, message }
+      code: codeData
     });
   }
 
   return { ok: true, blocks: normalized };
+}
+
+function normalizeRules(rules) {
+  if (!Array.isArray(rules)) {
+    return { ok: false, message: 'if는 배열이어야 합니다.' };
+  }
+
+  const normalized = [];
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway']);
+
+  for (const rule of rules.slice(0, 8)) {
+    if (!rule || typeof rule !== 'object') {
+      return { ok: false, message: 'if 규칙은 객체여야 합니다.' };
+    }
+
+    const when = normalizeCondition(rule.when || rule.condition || {});
+    if (!when.ok) {
+      return when;
+    }
+
+    const effect = rule.effect === undefined ? undefined : String(rule.effect).trim().toLowerCase();
+    const outDirection = normalizeDirection(rule.outDirection || rule.exitDirection || '');
+
+    if (effect !== undefined && !allowedEffects.has(effect)) {
+      return { ok: false, message: 'if 규칙에 지원하지 않는 효과가 있습니다.' };
+    }
+    if ((effect === 'force' || effect === 'oneway') && !outDirection) {
+      return { ok: false, message: 'if 규칙의 force/oneway 효과에는 outDirection이 필요합니다.' };
+    }
+
+    normalized.push({
+      when: when.condition,
+      ...(effect === undefined ? {} : { effect }),
+      ...(rule.moveCost === undefined ? {} : { moveCost: clamp(Number(rule.moveCost), 1, 9) }),
+      ...(outDirection ? { outDirection } : {}),
+      ...(rule.message === undefined ? {} : { message: String(rule.message).trim().slice(0, 80) }),
+      ...(rule.failMessage === undefined ? {} : { failMessage: String(rule.failMessage).trim().slice(0, 80) }),
+      ...(rule.exitFailMessage === undefined ? {} : { exitFailMessage: String(rule.exitFailMessage).trim().slice(0, 80) }),
+      ...(rule.consumeOnUse === undefined ? {} : { consumeOnUse: rule.consumeOnUse === true }),
+      ...(rule.giveKey === undefined ? {} : { giveKey: rule.giveKey === true }),
+      ...(rule.takeKey === undefined ? {} : { takeKey: rule.takeKey === true })
+    });
+  }
+
+  return { ok: true, rules: normalized };
+}
+
+function normalizeCondition(condition) {
+  if (!condition) {
+    return { ok: true, condition: null };
+  }
+  if (typeof condition !== 'object' || Array.isArray(condition)) {
+    return { ok: false, message: '조건은 객체여야 합니다.' };
+  }
+
+  const normalized = {};
+  const direction = condition.direction;
+
+  if (condition.hasKey !== undefined) {
+    normalized.hasKey = condition.hasKey === true;
+  }
+  if (direction !== undefined) {
+    const directions = Array.isArray(direction) ? direction : [direction];
+    const normalizedDirections = directions.map(normalizeDirection);
+    if (normalizedDirections.some((item) => !item)) {
+      return { ok: false, message: 'direction은 up, down, left, right 중 하나여야 합니다.' };
+    }
+    normalized.direction = Array.isArray(direction) ? normalizedDirections : normalizedDirections[0];
+  }
+
+  ['movesUsedAtLeast', 'movesUsedAtMost', 'movesRemainingAtLeast', 'movesRemainingAtMost'].forEach((key) => {
+    if (condition[key] !== undefined) {
+      normalized[key] = clamp(Number(condition[key]), 0, 99);
+    }
+  });
+
+  return { ok: true, condition: Object.keys(normalized).length ? normalized : null };
+}
+
+function normalizeDirection(value) {
+  const direction = String(value || '').trim().toLowerCase();
+  return ['up', 'down', 'left', 'right'].includes(direction) ? direction : '';
+}
+
+function normalizeBlockImage(value) {
+  const image = String(value || '').trim();
+  if (!image) {
+    return '';
+  }
+  if (image.length > 180000) {
+    return null;
+  }
+  return /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(image) ? image : null;
 }
 
 function calculateScore(level, moveLimit, clearTime, moveUsed) {

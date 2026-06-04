@@ -166,12 +166,28 @@ POST /api/blocks/:id/download
 
 ```json
 {
-  "name": "Bounce Pad",
-  "tile": "B",
+  "name": "One Way Gate",
+  "tile": "C",
   "color": "#38bdf8",
-  "effect": "bounce",
+  "effect": "oneway",
   "moveCost": 1,
-  "message": "다시 원래 칸으로 튕깁니다.",
+  "outDirection": "up",
+  "requires": {
+    "direction": "right",
+    "movesRemainingAtLeast": 1
+  },
+  "failMessage": "오른쪽으로 들어와야 통과할 수 있습니다.",
+  "exitFailMessage": "위쪽 출구가 막혀 있습니다.",
+  "message": "위쪽으로 빠져나갑니다.",
+  "if": [
+    {
+      "when": {
+        "hasKey": true
+      },
+      "effect": "goal",
+      "message": "열쇠 조건으로 비밀 목표가 열렸습니다."
+    }
+  ],
   "isPublic": true
 }
 ```
@@ -179,8 +195,25 @@ POST /api/blocks/:id/download
 Supported effects:
 
 ```text
-wall, goal, key, lock, slow, bounce, floor
+wall, goal, key, lock, slow, bounce, floor, force, oneway
 ```
+
+Supported directions:
+
+```text
+up, down, left, right
+```
+
+Supported conditions:
+
+```text
+hasKey
+direction
+movesUsedAtLeast / movesUsedAtMost
+movesRemainingAtLeast / movesRemainingAtMost
+```
+
+Custom block images are stored as small data URLs in the `image` field. The app accepts png, jpg, webp, and gif images up to the server limit.
 
 ### Records and Rankings
 

@@ -5,12 +5,14 @@ import {
   ArrowRight,
   ArrowUp,
   BarChart3,
+  BookOpen,
   Code2,
   Crown,
   Download,
   DoorOpen,
   Eraser,
   Hammer,
+  ImagePlus,
   KeyRound,
   ListRestart,
   Lock,
@@ -26,6 +28,7 @@ import {
   UploadCloud,
   User,
   UserPlus,
+  X,
   Zap
 } from 'lucide-react';
 import { fallbackStages } from './data/stages.js';
@@ -69,12 +72,26 @@ const basePalette = [
   { tile: 'B', label: '포탈 B' }
 ];
 const defaultBlockCode = {
-  name: '진흙',
+  name: '위쪽 게이트',
   tile: 'C',
-  color: '#a78bfa',
-  effect: 'slow',
-  moveCost: 2,
-  message: '진흙을 밟아 이동력이 더 소모됩니다.'
+  color: '#38bdf8',
+  effect: 'oneway',
+  moveCost: 1,
+  outDirection: 'up',
+  requires: {
+    direction: 'up'
+  },
+  failMessage: '위 방향으로 움직일 때만 통과할 수 있습니다.',
+  message: '위쪽 출구로 이동합니다.',
+  if: [
+    {
+      when: {
+        hasKey: true
+      },
+      effect: 'goal',
+      message: '열쇠 조건으로 비밀 목표가 열렸습니다.'
+    }
+  ]
 };
 
 export default function App() {
@@ -106,6 +123,7 @@ export default function App() {
   const [blockDraft, setBlockDraft] = useState(() => JSON.stringify(defaultBlockCode, null, 2));
   const [editingBlockId, setEditingBlockId] = useState(null);
   const [blockMessage, setBlockMessage] = useState('');
+  const [blockGuideOpen, setBlockGuideOpen] = useState(false);
 
   const movesRemaining = selectedStage.moveLimit - game.movesUsed;
   const currentBest = bestRecords[selectedStage.id];
@@ -411,6 +429,33 @@ export default function App() {
     } catch (error) {
       setBlockMessage(error.message);
     }
+  };
+
+  const attachBlockImage = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
+      setBlockMessage('png, jpg, webp, gif 이미지만 사용할 수 있습니다.');
+      return;
+    }
+    if (file.size > 140000) {
+      setBlockMessage('이미지는 140KB 이하로 줄여서 업로드하세요.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = safeJsonParse(blockDraft, defaultBlockCode);
+      setBlockDraft(JSON.stringify({ ...parsed, image: reader.result }, null, 2));
+      setBlockMessage('이미지를 블록 코드에 추가했습니다.');
+    };
+    reader.onerror = () => {
+      setBlockMessage('이미지를 읽지 못했습니다.');
+    };
+    reader.readAsDataURL(file);
   };
 
   const submitAuth = async (event) => {
@@ -941,7 +986,13 @@ export default function App() {
                 </div>
 
                 <div className="block-panel">
-                  <h3>커스텀 블록 코드</h3>
+                  <div className="block-panel-title">
+                    <h3>커스텀 블록 코드</h3>
+                    <button onClick={() => setBlockGuideOpen(true)} type="button">
+                      <BookOpen size={17} />
+                      <span>설명서</span>
+                    </button>
+                  </div>
                   <textarea
                     className="block-code"
                     onChange={(event) => setBlockDraft(event.target.value)}
@@ -964,6 +1015,17 @@ export default function App() {
                       <Eraser size={18} />
                       <span>새 블록</span>
                     </button>
+                    <label className="image-upload-button" htmlFor="block-image-upload">
+                      <ImagePlus size={18} />
+                      <span>이미지</span>
+                    </label>
+                    <input
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="visually-hidden"
+                      id="block-image-upload"
+                      onChange={attachBlockImage}
+                      type="file"
+                    />
                   </div>
                   {blockMessage && <p className="admin-message">{blockMessage}</p>}
                   <div className="block-list">
@@ -1162,6 +1224,7 @@ export default function App() {
           </section>
         )}
       </main>
+      {blockGuideOpen && <BlockGuide onClose={() => setBlockGuideOpen(false)} />}
     </div>
   );
 }
@@ -1271,7 +1334,10 @@ function BlockItem({ block, onDownload, onEdit, onRemove }) {
       </span>
       <div>
         <strong>{block.name}</strong>
-        <span>{block.effect} · {block.moveCost} cost · {block.downloads || 0} downloads</span>
+        <span>
+          {block.effect}
+          {block.outDirection ? ` ${block.outDirection}` : ''} · {block.moveCost} cost · {block.downloads || 0} downloads
+        </span>
       </div>
       <div className="block-actions">
         <button aria-label={`${block.name} 다운로드`} onClick={() => onDownload(block)} type="button">
@@ -1285,6 +1351,82 @@ function BlockItem({ block, onDownload, onEdit, onRemove }) {
             <Trash2 size={16} />
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+function BlockGuide({ onClose }) {
+  return (
+    <div className="block-guide-overlay" role="dialog" aria-modal="true" aria-label="커스텀 블록 코드 설명서">
+      <div className="block-guide-dialog">
+        <div className="block-guide-header">
+          <div>
+            <p className="eyebrow">CUSTOM BLOCK GUIDE</p>
+            <h2>블록 코드 설명서</h2>
+          </div>
+          <button aria-label="설명서 닫기" onClick={onClose} type="button">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="guide-grid">
+          <section>
+            <h3>기본 필드</h3>
+            <p>tile은 C~Z 한 글자입니다. A/B는 포탈 예약 문자라 사용할 수 없습니다.</p>
+            <pre>{`{
+  "name": "위쪽 게이트",
+  "tile": "C",
+  "color": "#38bdf8",
+  "effect": "oneway",
+  "moveCost": 1,
+  "outDirection": "up",
+  "message": "위쪽으로 이동합니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>조건과 if</h3>
+            <p>requires는 조건을 못 맞추면 막고, if는 조건을 맞춘 첫 규칙으로 효과를 바꿉니다.</p>
+            <pre>{`{
+  "requires": { "direction": "up" },
+  "failMessage": "위 방향으로만 통과할 수 있습니다.",
+  "if": [
+    {
+      "when": { "hasKey": true },
+      "effect": "goal",
+      "message": "열쇠로 비밀 목표가 열렸습니다."
+    }
+  ]
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>쓸 수 있는 값</h3>
+            <p>direction은 up, down, left, right를 사용합니다.</p>
+            <pre>{`effect:
+floor, wall, slow, bounce,
+key, lock, goal, force, oneway
+
+condition:
+hasKey
+direction
+movesUsedAtLeast / movesUsedAtMost
+movesRemainingAtLeast / movesRemainingAtMost`}</pre>
+          </section>
+
+          <section>
+            <h3>이미지</h3>
+            <p>이미지 버튼을 누르면 image 필드가 자동으로 추가됩니다. 작은 png, jpg, webp, gif만 권장합니다.</p>
+            <pre>{`{
+  "name": "사진 벽",
+  "tile": "W",
+  "effect": "wall",
+  "color": "#64748b",
+  "image": "data:image/png;base64,..."
+}`}</pre>
+          </section>
+        </div>
       </div>
     </div>
   );
@@ -1353,6 +1495,10 @@ function normalizeStage(stage) {
 
 function normalizeCustomBlock(block) {
   const code = typeof block.code === 'string' ? safeJsonParse(block.code, {}) : block.code || block;
+  const image = String(code.image || code.imageData || block.image || block.imageData || '');
+  const outDirection = normalizeDirectionValue(code.outDirection || code.exitDirection || block.outDirection || block.exitDirection || '');
+  const requires = normalizeBlockCondition(code.requires || code.require || block.requires || block.require || null);
+  const rules = normalizeBlockRules(code.if || code.rules || block.if || block.rules || []);
   return {
     id: block.id || null,
     userId: block.userId ?? block.user_id,
@@ -1360,25 +1506,43 @@ function normalizeCustomBlock(block) {
     name: String(code.name || block.name || '커스텀').slice(0, 24),
     tile: String(code.tile || block.tile || 'C').slice(0, 1).toUpperCase(),
     color: String(code.color || block.color || '#a78bfa'),
-    effect: String(code.effect || block.effect || 'slow'),
+    effect: String(code.effect || block.effect || 'slow').toLowerCase(),
     moveCost: Number(code.moveCost ?? block.moveCost ?? block.move_cost ?? 2),
     message: String(code.message || block.message || ''),
+    failMessage: String(code.failMessage || block.failMessage || ''),
+    exitFailMessage: String(code.exitFailMessage || block.exitFailMessage || ''),
+    image,
+    outDirection,
+    requires,
+    consumeOnUse: code.consumeOnUse === true || block.consumeOnUse === true,
+    giveKey: code.giveKey === true || block.giveKey === true,
+    takeKey: code.takeKey === true || block.takeKey === true,
+    rules,
     isPublic: block.isPublic ?? (block.is_public === undefined ? true : block.is_public !== 0),
     downloads: block.downloads || 0,
     code: {
       name: String(code.name || block.name || '커스텀').slice(0, 24),
       tile: String(code.tile || block.tile || 'C').slice(0, 1).toUpperCase(),
       color: String(code.color || block.color || '#a78bfa'),
-      effect: String(code.effect || block.effect || 'slow'),
+      effect: String(code.effect || block.effect || 'slow').toLowerCase(),
       moveCost: Number(code.moveCost ?? block.moveCost ?? block.move_cost ?? 2),
-      message: String(code.message || block.message || '')
+      message: String(code.message || block.message || ''),
+      failMessage: String(code.failMessage || block.failMessage || ''),
+      exitFailMessage: String(code.exitFailMessage || block.exitFailMessage || ''),
+      image,
+      outDirection,
+      requires,
+      consumeOnUse: code.consumeOnUse === true || block.consumeOnUse === true,
+      giveKey: code.giveKey === true || block.giveKey === true,
+      takeKey: code.takeKey === true || block.takeKey === true,
+      if: rules
     }
   };
 }
 
 function parseBlockDraft(draft) {
   const parsed = safeJsonParse(draft, null);
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway']);
   const reservedTiles = new Set(['.', '#', 'P', 'G', 'K', 'L', 'A', 'B']);
 
   if (!parsed || typeof parsed !== 'object') {
@@ -1394,13 +1558,29 @@ function parseBlockDraft(draft) {
     return { ok: false, message: 'name이 필요합니다.' };
   }
   if (!allowedEffects.has(block.effect)) {
-    return { ok: false, message: 'effect는 slow, wall, bounce, goal, key, lock, floor 중 하나여야 합니다.' };
+    return { ok: false, message: 'effect는 slow, wall, bounce, goal, key, lock, floor, force, oneway 중 하나여야 합니다.' };
+  }
+  if ((block.effect === 'force' || block.effect === 'oneway') && !block.outDirection) {
+    return { ok: false, message: 'force/oneway 효과에는 outDirection이 필요합니다.' };
   }
   if (!/^#[0-9a-fA-F]{6}$/.test(block.color)) {
     return { ok: false, message: 'color는 #RRGGBB 형식이어야 합니다.' };
   }
   if (!Number.isInteger(block.moveCost) || block.moveCost < 1 || block.moveCost > 9) {
     return { ok: false, message: 'moveCost는 1~9 사이의 정수여야 합니다.' };
+  }
+  if (block.image && !isValidBlockImage(block.image)) {
+    return { ok: false, message: 'image는 180KB 이하의 png, jpg, webp, gif data URL이어야 합니다.' };
+  }
+
+  const conditionValidation = validateBlockCondition(parsed.requires || parsed.require || null);
+  if (!conditionValidation.ok) {
+    return conditionValidation;
+  }
+
+  const rulesValidation = validateBlockRules(parsed.if || parsed.rules || []);
+  if (!rulesValidation.ok) {
+    return rulesValidation;
   }
 
   return { ok: true, block };
@@ -1495,6 +1675,120 @@ function validateBuilder(builder) {
   return { ok: true };
 }
 
+function normalizeBlockRules(rules) {
+  if (!Array.isArray(rules)) {
+    return [];
+  }
+
+  return rules
+    .filter((rule) => rule && typeof rule === 'object')
+    .slice(0, 8)
+    .map((rule) => ({
+      when: normalizeBlockCondition(rule.when || rule.condition || {}),
+      ...(rule.effect === undefined ? {} : { effect: String(rule.effect).toLowerCase() }),
+      ...(rule.moveCost === undefined ? {} : { moveCost: Number(rule.moveCost) }),
+      ...(normalizeDirectionValue(rule.outDirection || rule.exitDirection) ? { outDirection: normalizeDirectionValue(rule.outDirection || rule.exitDirection) } : {}),
+      ...(rule.message === undefined ? {} : { message: String(rule.message) }),
+      ...(rule.failMessage === undefined ? {} : { failMessage: String(rule.failMessage) }),
+      ...(rule.exitFailMessage === undefined ? {} : { exitFailMessage: String(rule.exitFailMessage) }),
+      ...(rule.consumeOnUse === undefined ? {} : { consumeOnUse: rule.consumeOnUse === true }),
+      ...(rule.giveKey === undefined ? {} : { giveKey: rule.giveKey === true }),
+      ...(rule.takeKey === undefined ? {} : { takeKey: rule.takeKey === true })
+    }));
+}
+
+function normalizeBlockCondition(condition) {
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) {
+    return null;
+  }
+
+  const normalized = {};
+  if (condition.hasKey !== undefined) {
+    normalized.hasKey = condition.hasKey === true;
+  }
+  if (condition.direction !== undefined) {
+    const directions = Array.isArray(condition.direction) ? condition.direction : [condition.direction];
+    const normalizedDirections = directions.map(normalizeDirectionValue).filter(Boolean);
+    if (normalizedDirections.length > 0) {
+      normalized.direction = Array.isArray(condition.direction) ? normalizedDirections : normalizedDirections[0];
+    }
+  }
+
+  ['movesUsedAtLeast', 'movesUsedAtMost', 'movesRemainingAtLeast', 'movesRemainingAtMost'].forEach((key) => {
+    if (condition[key] !== undefined && Number.isFinite(Number(condition[key]))) {
+      normalized[key] = Math.max(0, Math.min(Math.round(Number(condition[key])), 99));
+    }
+  });
+
+  return Object.keys(normalized).length ? normalized : null;
+}
+
+function validateBlockCondition(condition) {
+  if (!condition) {
+    return { ok: true };
+  }
+  if (typeof condition !== 'object' || Array.isArray(condition)) {
+    return { ok: false, message: '조건은 JSON 객체여야 합니다.' };
+  }
+  if (condition.direction !== undefined) {
+    const directions = Array.isArray(condition.direction) ? condition.direction : [condition.direction];
+    if (directions.map(normalizeDirectionValue).some((direction) => !direction)) {
+      return { ok: false, message: 'direction은 up, down, left, right 중 하나여야 합니다.' };
+    }
+  }
+
+  const numberKeys = ['movesUsedAtLeast', 'movesUsedAtMost', 'movesRemainingAtLeast', 'movesRemainingAtMost'];
+  if (numberKeys.some((key) => condition[key] !== undefined && !Number.isFinite(Number(condition[key])))) {
+    return { ok: false, message: '이동 횟수 조건은 숫자여야 합니다.' };
+  }
+
+  return { ok: true };
+}
+
+function validateBlockRules(rules) {
+  if (!Array.isArray(rules)) {
+    return { ok: false, message: 'if는 배열이어야 합니다.' };
+  }
+
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway']);
+
+  for (const rule of rules) {
+    if (!rule || typeof rule !== 'object') {
+      return { ok: false, message: 'if 규칙은 JSON 객체여야 합니다.' };
+    }
+    const conditionValidation = validateBlockCondition(rule.when || rule.condition || {});
+    if (!conditionValidation.ok) {
+      return conditionValidation;
+    }
+    if (rule.effect !== undefined && !allowedEffects.has(String(rule.effect).toLowerCase())) {
+      return { ok: false, message: 'if 규칙의 effect 값이 올바르지 않습니다.' };
+    }
+    const outDirection = normalizeDirectionValue(rule.outDirection || rule.exitDirection || '');
+    const effect = String(rule.effect || '').toLowerCase();
+    if ((effect === 'force' || effect === 'oneway') && !outDirection) {
+      return { ok: false, message: 'if 규칙의 force/oneway 효과에는 outDirection이 필요합니다.' };
+    }
+    if ((rule.outDirection || rule.exitDirection) && !outDirection) {
+      return { ok: false, message: 'if 규칙의 outDirection은 up, down, left, right 중 하나여야 합니다.' };
+    }
+  }
+
+  return { ok: true };
+}
+
+function normalizeDirectionValue(value) {
+  const direction = String(value || '').toLowerCase();
+  return ['up', 'down', 'left', 'right'].includes(direction) ? direction : '';
+}
+
+function isValidBlockImage(image) {
+  return (
+    typeof image === 'string' &&
+    image.length <= 180000 &&
+    /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(image)
+  );
+}
+
 function loadLocalBlocks() {
   try {
     return (JSON.parse(localStorage.getItem(blockLibraryKey)) || []).map(normalizeCustomBlock);
@@ -1551,11 +1845,19 @@ function tileStyle(tile, customBlocks = []) {
   if (!customBlock) {
     return undefined;
   }
-  return {
+  const style = {
     '--custom-color': customBlock.color,
-    background: customBlock.color,
+    backgroundColor: customBlock.color,
     borderColor: customBlock.color
   };
+
+  if (customBlock.image) {
+    style.backgroundImage = `linear-gradient(rgba(5, 8, 12, 0.08), rgba(5, 8, 12, 0.2)), url("${customBlock.image}")`;
+    style.backgroundSize = 'cover';
+    style.backgroundPosition = 'center';
+  }
+
+  return style;
 }
 
 function getCustomBlock(tile, customBlocks = []) {
