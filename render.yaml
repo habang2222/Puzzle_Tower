@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: puzzle-tower-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: CLIENT_ORIGIN
+        value: https://habang2222.github.io
