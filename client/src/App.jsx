@@ -5,7 +5,9 @@ import {
   ArrowRight,
   ArrowUp,
   BarChart3,
+  Code2,
   Crown,
+  Download,
   DoorOpen,
   Eraser,
   Hammer,
@@ -31,26 +33,32 @@ import { calculateScore, createInitialGame, movePlayer } from './game/engine.js'
 import {
   createStage,
   deleteCommunityStage,
+  deleteCustomBlock,
   deleteStage,
+  downloadCustomBlock,
   fetchHealth,
   fetchMe,
   fetchMyStages,
+  fetchMyBlocks,
+  fetchPublicBlocks,
   fetchRankings,
   fetchStages,
   getAuthToken,
-  getGoogleLoginUrl,
   loginUser,
   publishCommunityStage,
   registerUser,
   saveRecord,
   setAuthToken,
+  createCustomBlock,
   updateCommunityStage,
+  updateCustomBlock,
   updateStage
 } from './services/api.js';
 
 const bestRecordKey = 'puzzle-tower-best-records';
 const nicknameKey = 'puzzle-tower-nickname';
-const palette = [
+const blockLibraryKey = 'puzzle-tower-custom-blocks';
+const basePalette = [
   { tile: '.', label: '길' },
   { tile: '#', label: '벽' },
   { tile: 'P', label: '시작' },
@@ -60,6 +68,14 @@ const palette = [
   { tile: 'A', label: '포탈 A' },
   { tile: 'B', label: '포탈 B' }
 ];
+const defaultBlockCode = {
+  name: '진흙',
+  tile: 'C',
+  color: '#a78bfa',
+  effect: 'slow',
+  moveCost: 2,
+  message: '진흙을 밟아 이동력이 더 소모됩니다.'
+};
 
 export default function App() {
   const [view, setView] = useState('home');
@@ -84,9 +100,28 @@ export default function App() {
   const [selectedTile, setSelectedTile] = useState('#');
   const [builderMessage, setBuilderMessage] = useState('');
   const [myStages, setMyStages] = useState([]);
+  const [customBlocks, setCustomBlocks] = useState(() => loadLocalBlocks());
+  const [publicBlocks, setPublicBlocks] = useState([]);
+  const [myBlocks, setMyBlocks] = useState([]);
+  const [blockDraft, setBlockDraft] = useState(() => JSON.stringify(defaultBlockCode, null, 2));
+  const [editingBlockId, setEditingBlockId] = useState(null);
+  const [blockMessage, setBlockMessage] = useState('');
 
   const movesRemaining = selectedStage.moveLimit - game.movesUsed;
   const currentBest = bestRecords[selectedStage.id];
+  const palette = useMemo(
+    () => [
+      ...basePalette,
+      ...customBlocks.map((block) => ({
+        tile: block.tile,
+        label: block.name,
+        custom: true,
+        color: block.color,
+        effect: block.effect
+      }))
+    ],
+    [customBlocks]
+  );
 
   const refreshStages = useCallback(async () => {
     const loadedStages = await fetchStages();
@@ -101,21 +136,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const tokenFromGoogle = url.searchParams.get('token');
-    const authError = url.searchParams.get('auth_error');
-
-    if (tokenFromGoogle) {
-      setAuthToken(tokenFromGoogle);
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-    if (authError) {
-      setAuthMessage(authError === 'google-not-configured' ? '구글 로그인 환경변수가 아직 설정되지 않았습니다.' : '구글 로그인에 실패했습니다.');
-      setView('auth');
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-
-    const token = tokenFromGoogle || getAuthToken();
+    const token = getAuthToken();
     if (token) {
       fetchMe()
         .then(({ user: loadedUser }) => {
@@ -167,8 +188,19 @@ export default function App() {
   useEffect(() => {
     if (view === 'builder' && user) {
       loadMyStages();
+      loadMyBlocks();
     }
   }, [user, view]);
+
+  useEffect(() => {
+    if (view === 'builder') {
+      loadPublicBlocks();
+    }
+  }, [view]);
+
+  useEffect(() => {
+    localStorage.setItem(blockLibraryKey, JSON.stringify(customBlocks));
+  }, [customBlocks]);
 
   useEffect(() => {
     if (game.status !== 'cleared' || recordSaved) {
@@ -286,6 +318,101 @@ export default function App() {
     }
   };
 
+  const loadPublicBlocks = async () => {
+    try {
+      const rows = await fetchPublicBlocks();
+      setPublicBlocks(rows.map(normalizeCustomBlock));
+      setApiOnline(true);
+    } catch (error) {
+      setPublicBlocks([]);
+    }
+  };
+
+  const loadMyBlocks = async () => {
+    try {
+      const rows = await fetchMyBlocks();
+      const normalized = rows.map(normalizeCustomBlock);
+      setMyBlocks(normalized);
+      mergeCustomBlocks(normalized);
+      setApiOnline(true);
+    } catch (error) {
+      setMyBlocks([]);
+    }
+  };
+
+  const mergeCustomBlocks = (blocks) => {
+    setCustomBlocks((current) => mergeBlocks(current, blocks));
+  };
+
+  const saveBlockDraft = async () => {
+    const parsed = parseBlockDraft(blockDraft);
+    if (!parsed.ok) {
+      setBlockMessage(parsed.message);
+      return;
+    }
+
+    const block = normalizeCustomBlock(parsed.block);
+    mergeCustomBlocks([block]);
+
+    if (!user) {
+      setBlockMessage('블록을 로컬 라이브러리에 저장했습니다. 공개 공유는 로그인 후 가능합니다.');
+      return;
+    }
+
+    try {
+      const saved = editingBlockId ? await updateCustomBlock(editingBlockId, block) : await createCustomBlock(block);
+      const normalized = normalizeCustomBlock(saved);
+      setEditingBlockId(normalized.id);
+      mergeCustomBlocks([normalized]);
+      await loadMyBlocks();
+      await loadPublicBlocks();
+      setBlockMessage(editingBlockId ? '블록이 수정되었습니다.' : '블록이 공개 라이브러리에 저장되었습니다.');
+      setApiOnline(true);
+    } catch (error) {
+      setBlockMessage(error.message);
+    }
+  };
+
+  const editCustomBlock = (block) => {
+    const normalized = normalizeCustomBlock(block);
+    setEditingBlockId(normalized.id || null);
+    setBlockDraft(JSON.stringify(normalized.code, null, 2));
+    mergeCustomBlocks([normalized]);
+    setSelectedTile(normalized.tile);
+    setBlockMessage('블록 코드를 편집 모드로 불러왔습니다.');
+  };
+
+  const removeCustomBlock = async (block) => {
+    if (block.id && user) {
+      try {
+        await deleteCustomBlock(block.id);
+        await loadMyBlocks();
+        await loadPublicBlocks();
+      } catch (error) {
+        setBlockMessage(error.message);
+        return;
+      }
+    }
+
+    setCustomBlocks((current) => current.filter((item) => item.tile !== block.tile));
+    if (selectedTile === block.tile) {
+      setSelectedTile('#');
+    }
+    setBlockMessage('블록을 라이브러리에서 제거했습니다.');
+  };
+
+  const downloadBlock = async (block) => {
+    try {
+      const downloaded = block.id ? await downloadCustomBlock(block.id) : block;
+      const normalized = normalizeCustomBlock(downloaded);
+      mergeCustomBlocks([normalized]);
+      setSelectedTile(normalized.tile);
+      setBlockMessage('블록을 내 제작 팔레트에 추가했습니다.');
+    } catch (error) {
+      setBlockMessage(error.message);
+    }
+  };
+
   const submitAuth = async (event) => {
     event.preventDefault();
     setAuthMessage('');
@@ -397,6 +524,7 @@ export default function App() {
 
   const loadBuilderFromStage = (stage) => {
     const board = stage.board.map((row) => row.split(''));
+    mergeCustomBlocks(stage.customBlocks || []);
     setBuilder({
       id: stage.id,
       title: stage.title,
@@ -427,7 +555,8 @@ export default function App() {
       title: builder.title,
       difficulty: builder.difficulty,
       moveLimit: Number(builder.moveLimit),
-      board: boardToStrings(builder.board)
+      board: boardToStrings(builder.board),
+      customBlocks: getUsedCustomBlocks(builder.board, customBlocks)
     };
 
     try {
@@ -500,6 +629,7 @@ export default function App() {
       </header>
 
       <main>
+        <AdSlot />
         {view === 'home' && (
           <section className="home-layout">
             <div className="intro-panel">
@@ -630,10 +760,6 @@ export default function App() {
                     {authMode === 'signup' ? <UserPlus size={18} /> : <LogIn size={18} />}
                     <span>{authMode === 'signup' ? '가입하기' : '로그인'}</span>
                   </button>
-                  <button onClick={() => { window.location.href = getGoogleLoginUrl(); }} type="button">
-                    <User size={18} />
-                    <span>Google 로그인</span>
-                  </button>
                 </div>
                 {authMessage && <p className="admin-message">{authMessage}</p>}
               </form>
@@ -702,7 +828,7 @@ export default function App() {
             {!user ? (
               <div className="auth-card">
                 <h3>로그인 후 맵을 업로드할 수 있습니다.</h3>
-                <p className="intro-copy">회원가입 또는 Google 로그인으로 접속하면 직접 만든 맵이 서버에 저장되고 다른 플레이어도 플레이할 수 있습니다.</p>
+                <p className="intro-copy">회원가입 또는 이메일 로그인으로 접속하면 직접 만든 맵과 커스텀 블록이 서버에 저장되고 다른 플레이어도 사용할 수 있습니다.</p>
                 <button className="primary" onClick={() => setView('auth')} type="button">
                   <LogIn size={18} />
                   <span>로그인하러 가기</span>
@@ -760,7 +886,9 @@ export default function App() {
                         onClick={() => setSelectedTile(item.tile)}
                         type="button"
                       >
-                        <span className={`palette-chip ${tileClass(item.tile)}`}>{tileLabel(item.tile) || item.tile}</span>
+                        <span className={`palette-chip ${tileClass(item.tile, customBlocks)}`} style={tileStyle(item.tile, customBlocks)}>
+                          {tileLabel(item.tile, customBlocks) || item.tile}
+                        </span>
                         <span>{item.label}</span>
                       </button>
                     ))}
@@ -779,7 +907,7 @@ export default function App() {
                 </div>
 
                 <div className="builder-board-wrap">
-                  <BuilderBoard board={builder.board} onPaint={paintBuilderTile} />
+                  <BuilderBoard board={builder.board} customBlocks={customBlocks} onPaint={paintBuilderTile} />
                 </div>
 
                 <div className="my-map-panel">
@@ -810,6 +938,65 @@ export default function App() {
                       ))}
                     </div>
                   )}
+                </div>
+
+                <div className="block-panel">
+                  <h3>커스텀 블록 코드</h3>
+                  <textarea
+                    className="block-code"
+                    onChange={(event) => setBlockDraft(event.target.value)}
+                    spellCheck="false"
+                    value={blockDraft}
+                  />
+                  <div className="hero-actions">
+                    <button className="primary" onClick={saveBlockDraft} type="button">
+                      <Code2 size={18} />
+                      <span>{editingBlockId ? '블록 수정' : '블록 저장'}</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingBlockId(null);
+                        setBlockDraft(JSON.stringify(defaultBlockCode, null, 2));
+                        setBlockMessage('');
+                      }}
+                      type="button"
+                    >
+                      <Eraser size={18} />
+                      <span>새 블록</span>
+                    </button>
+                  </div>
+                  {blockMessage && <p className="admin-message">{blockMessage}</p>}
+                  <div className="block-list">
+                    <h4>내 팔레트</h4>
+                    {customBlocks.length === 0 ? (
+                      <p className="stage-author">저장한 커스텀 블록이 없습니다.</p>
+                    ) : (
+                      customBlocks.map((block) => (
+                        <BlockItem
+                          block={block}
+                          key={`${block.id || 'local'}-${block.tile}`}
+                          onDownload={downloadBlock}
+                          onEdit={editCustomBlock}
+                          onRemove={removeCustomBlock}
+                        />
+                      ))
+                    )}
+                  </div>
+                  <div className="block-list">
+                    <h4>공개 블록</h4>
+                    {publicBlocks.length === 0 ? (
+                      <p className="stage-author">서버에 공개된 블록이 아직 없습니다.</p>
+                    ) : (
+                      publicBlocks.map((block) => (
+                        <BlockItem
+                          block={block}
+                          key={`public-${block.id}`}
+                          onDownload={downloadBlock}
+                          onEdit={editCustomBlock}
+                        />
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -979,18 +1166,41 @@ export default function App() {
   );
 }
 
+function AdSlot() {
+  useEffect(() => {
+    try {
+      window.adsbygoogle = window.adsbygoogle || [];
+      window.adsbygoogle.push({});
+    } catch (error) {
+      // Ad blockers or local previews can block AdSense; the game should continue.
+    }
+  }, []);
+
+  return (
+    <aside className="ad-shell" aria-label="광고">
+      <ins
+        className="adsbygoogle"
+        data-ad-client="ca-pub-3303941146778727"
+        data-ad-slot="4790314323"
+        style={{ display: 'inline-block', width: '360px', height: '800px' }}
+      />
+    </aside>
+  );
+}
+
 function GameBoard({ game }) {
   const columns = game.tiles[0]?.length || 1;
+  const customBlocks = game.customBlocks || [];
 
   return (
     <div className="board" style={{ '--columns': columns }}>
       {game.tiles.map((row, rowIndex) =>
         row.map((tile, colIndex) => {
           const isPlayer = game.player.row === rowIndex && game.player.col === colIndex;
-          const className = ['tile', tileClass(tile), isPlayer ? 'player' : ''].filter(Boolean).join(' ');
+          const className = ['tile', tileClass(tile, customBlocks), isPlayer ? 'player' : ''].filter(Boolean).join(' ');
           return (
-            <div className={className} key={`${rowIndex}-${colIndex}`}>
-              {isPlayer ? <Crown size={24} /> : tileLabel(tile)}
+            <div className={className} key={`${rowIndex}-${colIndex}`} style={tileStyle(tile, customBlocks)}>
+              {isPlayer ? <Crown size={24} /> : tileLabel(tile, customBlocks)}
             </div>
           );
         })
@@ -1021,27 +1231,61 @@ function MovePad({ onMove }) {
 }
 
 function MiniBoard({ compact = false, stage }) {
+  const customBlocks = stage.customBlocks || [];
   return (
     <div className={compact ? 'mini-board compact' : 'mini-board'} style={{ '--columns': stage.board[0]?.length || 1 }}>
       {stage.board.flatMap((row, rowIndex) =>
         row.split('').map((tile, colIndex) => (
-          <span className={tileClass(tile)} key={`${rowIndex}-${colIndex}`} />
+          <span className={tileClass(tile, customBlocks)} key={`${rowIndex}-${colIndex}`} style={tileStyle(tile, customBlocks)} />
         ))
       )}
     </div>
   );
 }
 
-function BuilderBoard({ board, onPaint }) {
+function BuilderBoard({ board, customBlocks, onPaint }) {
   return (
     <div className="builder-board" style={{ '--columns': board[0]?.length || 1 }}>
       {board.map((row, rowIndex) =>
         row.map((tile, colIndex) => (
-          <button className={`tile ${tileClass(tile)}`} key={`${rowIndex}-${colIndex}`} onClick={() => onPaint(rowIndex, colIndex)} type="button">
-            {tileLabel(tile)}
+          <button
+            className={`tile ${tileClass(tile, customBlocks)}`}
+            key={`${rowIndex}-${colIndex}`}
+            onClick={() => onPaint(rowIndex, colIndex)}
+            style={tileStyle(tile, customBlocks)}
+            type="button"
+          >
+            {tileLabel(tile, customBlocks)}
           </button>
         ))
       )}
+    </div>
+  );
+}
+
+function BlockItem({ block, onDownload, onEdit, onRemove }) {
+  return (
+    <div className="block-item">
+      <span className="palette-chip custom" style={tileStyle(block.tile, [block])}>
+        {block.tile}
+      </span>
+      <div>
+        <strong>{block.name}</strong>
+        <span>{block.effect} · {block.moveCost} cost · {block.downloads || 0} downloads</span>
+      </div>
+      <div className="block-actions">
+        <button aria-label={`${block.name} 다운로드`} onClick={() => onDownload(block)} type="button">
+          <Download size={16} />
+        </button>
+        <button aria-label={`${block.name} 편집`} onClick={() => onEdit(block)} type="button">
+          <Pencil size={16} />
+        </button>
+        {onRemove && (
+          <button aria-label={`${block.name} 삭제`} onClick={() => onRemove(block)} type="button">
+            <Trash2 size={16} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1098,12 +1342,81 @@ function normalizeStage(stage) {
     difficulty: stage.difficulty,
     moveLimit: stage.moveLimit ?? stage.move_limit,
     board: typeof boardData === 'string' ? JSON.parse(boardData).board || JSON.parse(boardData) : boardData,
+    customBlocks: Array.isArray(stage.customBlocks) ? stage.customBlocks.map(normalizeCustomBlock) : [],
     creatorId: stage.creatorId ?? stage.creator_id,
     creatorNickname: stage.creatorNickname ?? stage.creator_nickname,
     isOfficial,
     isPublic: stage.isPublic ?? (stage.is_public === undefined ? true : stage.is_public !== 0),
     playCount: stage.playCount ?? stage.play_count ?? 0
   };
+}
+
+function normalizeCustomBlock(block) {
+  const code = typeof block.code === 'string' ? safeJsonParse(block.code, {}) : block.code || block;
+  return {
+    id: block.id || null,
+    userId: block.userId ?? block.user_id,
+    creatorNickname: block.creatorNickname ?? block.creator_nickname,
+    name: String(code.name || block.name || '커스텀').slice(0, 24),
+    tile: String(code.tile || block.tile || 'C').slice(0, 1).toUpperCase(),
+    color: String(code.color || block.color || '#a78bfa'),
+    effect: String(code.effect || block.effect || 'slow'),
+    moveCost: Number(code.moveCost ?? block.moveCost ?? block.move_cost ?? 2),
+    message: String(code.message || block.message || ''),
+    isPublic: block.isPublic ?? (block.is_public === undefined ? true : block.is_public !== 0),
+    downloads: block.downloads || 0,
+    code: {
+      name: String(code.name || block.name || '커스텀').slice(0, 24),
+      tile: String(code.tile || block.tile || 'C').slice(0, 1).toUpperCase(),
+      color: String(code.color || block.color || '#a78bfa'),
+      effect: String(code.effect || block.effect || 'slow'),
+      moveCost: Number(code.moveCost ?? block.moveCost ?? block.move_cost ?? 2),
+      message: String(code.message || block.message || '')
+    }
+  };
+}
+
+function parseBlockDraft(draft) {
+  const parsed = safeJsonParse(draft, null);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor']);
+  const reservedTiles = new Set(['.', '#', 'P', 'G', 'K', 'L', 'A', 'B']);
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { ok: false, message: '블록 코드는 JSON 객체여야 합니다.' };
+  }
+
+  const block = normalizeCustomBlock(parsed);
+
+  if (!/^[C-Z]$/.test(block.tile) || reservedTiles.has(block.tile)) {
+    return { ok: false, message: 'tile은 C~Z 중 예약되지 않은 한 글자여야 합니다.' };
+  }
+  if (!block.name.trim()) {
+    return { ok: false, message: 'name이 필요합니다.' };
+  }
+  if (!allowedEffects.has(block.effect)) {
+    return { ok: false, message: 'effect는 slow, wall, bounce, goal, key, lock, floor 중 하나여야 합니다.' };
+  }
+  if (!/^#[0-9a-fA-F]{6}$/.test(block.color)) {
+    return { ok: false, message: 'color는 #RRGGBB 형식이어야 합니다.' };
+  }
+  if (!Number.isInteger(block.moveCost) || block.moveCost < 1 || block.moveCost > 9) {
+    return { ok: false, message: 'moveCost는 1~9 사이의 정수여야 합니다.' };
+  }
+
+  return { ok: true, block };
+}
+
+function mergeBlocks(current, incoming) {
+  const merged = new Map(current.map((block) => [block.tile, normalizeCustomBlock(block)]));
+  incoming.map(normalizeCustomBlock).forEach((block) => {
+    merged.set(block.tile, block);
+  });
+  return [...merged.values()].sort((a, b) => a.tile.localeCompare(b.tile));
+}
+
+function getUsedCustomBlocks(board, customBlocks) {
+  const usedTiles = new Set(board.flat());
+  return customBlocks.filter((block) => usedTiles.has(block.tile));
 }
 
 function sortStages(a, b) {
@@ -1182,6 +1495,14 @@ function validateBuilder(builder) {
   return { ok: true };
 }
 
+function loadLocalBlocks() {
+  try {
+    return (JSON.parse(localStorage.getItem(blockLibraryKey)) || []).map(normalizeCustomBlock);
+  } catch (error) {
+    return [];
+  }
+}
+
 function loadBestRecords() {
   try {
     return JSON.parse(localStorage.getItem(bestRecordKey)) || {};
@@ -1203,7 +1524,8 @@ function chooseBetterRecord(previous, next) {
   return previous;
 }
 
-function tileClass(tile) {
+function tileClass(tile, customBlocks = []) {
+  if (getCustomBlock(tile, customBlocks)) return 'custom';
   if (tile === '#') return 'wall';
   if (tile === 'G') return 'goal';
   if (tile === 'K') return 'key';
@@ -1213,11 +1535,37 @@ function tileClass(tile) {
   return 'floor';
 }
 
-function tileLabel(tile) {
+function tileLabel(tile, customBlocks = []) {
+  const customBlock = getCustomBlock(tile, customBlocks);
+  if (customBlock) return customBlock.tile;
   if (tile === 'G') return 'G';
   if (tile === 'K') return 'K';
   if (tile === 'L') return 'L';
   if (tile === 'P') return 'P';
   if (/^[A-Z]$/.test(tile) && !['P', 'G', 'K', 'L'].includes(tile)) return tile;
   return '';
+}
+
+function tileStyle(tile, customBlocks = []) {
+  const customBlock = getCustomBlock(tile, customBlocks);
+  if (!customBlock) {
+    return undefined;
+  }
+  return {
+    '--custom-color': customBlock.color,
+    background: customBlock.color,
+    borderColor: customBlock.color
+  };
+}
+
+function getCustomBlock(tile, customBlocks = []) {
+  return customBlocks.find((block) => block.tile === tile);
+}
+
+function safeJsonParse(value, fallback) {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    return fallback;
+  }
 }

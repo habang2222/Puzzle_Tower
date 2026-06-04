@@ -11,11 +11,14 @@ Puzzle Tower is a full-stack web puzzle game. Players clear tile stages with a m
 - Increasing difficulty with walls, move limits, teleport tiles, keys, and locks
 - Local best record fallback
 - Email/password signup and login
-- Google OAuth login support
 - Player-made map builder and upload flow
+- Custom block editor with safe JSON block rules
+- Public custom block library and download API
 - Public community map list
 - Ranking save and lookup API
 - Admin stage CRUD API
+- Responsive sticky game controls
+- AdSense slot integration
 - GitHub Pages deployment workflow for the frontend
 - Render-ready backend configuration
 
@@ -69,9 +72,6 @@ CLIENT_ORIGIN=http://localhost:5173
 CLIENT_URL=http://localhost:5173
 ADMIN_TOKEN=change-this-token
 JWT_SECRET=replace-this-with-a-long-random-value
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_CALLBACK_URL=http://localhost:4000/api/auth/google/callback
 ```
 
 ## API List
@@ -95,8 +95,6 @@ GET /api/stages/:level
 POST /api/auth/register
 POST /api/auth/login
 GET /api/auth/me
-GET /api/auth/google/start
-GET /api/auth/google/callback
 ```
 
 `POST /api/auth/register` body:
@@ -137,8 +135,51 @@ DELETE /api/community/stages/:id
     ".##.",
     "....",
     "...."
+  ],
+  "customBlocks": [
+    {
+      "name": "Slow Neon",
+      "tile": "S",
+      "color": "#6ee7ff",
+      "effect": "slow",
+      "moveCost": 2,
+      "message": "이 블록은 이동 횟수를 2 사용합니다."
+    }
   ]
 }
+```
+
+### Custom Blocks
+
+Custom blocks use a small JSON rule format instead of arbitrary JavaScript so uploaded blocks are safe for other players.
+
+```http
+GET /api/blocks
+GET /api/me/blocks
+POST /api/blocks
+PUT /api/blocks/:id
+DELETE /api/blocks/:id
+POST /api/blocks/:id/download
+```
+
+`POST /api/blocks` body:
+
+```json
+{
+  "name": "Bounce Pad",
+  "tile": "B",
+  "color": "#38bdf8",
+  "effect": "bounce",
+  "moveCost": 1,
+  "message": "다시 원래 칸으로 튕깁니다.",
+  "isPublic": true
+}
+```
+
+Supported effects:
+
+```text
+wall, goal, key, lock, slow, bounce, floor
 ```
 
 ### Records and Rankings
@@ -198,8 +239,7 @@ Use `render.yaml` as a starting point, or create a Render Web Service manually:
 - Root directory: `server`
 - Build command: `npm install`
 - Start command: `npm start`
-- Environment variables: `ADMIN_TOKEN`, `JWT_SECRET`, `CLIENT_URL`
-- Optional Google login variables: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`
+- Environment variables: `ADMIN_TOKEN`, `JWT_SECRET`, `CLIENT_ORIGIN`, `CLIENT_URL`
 
 Backend API URL format:
 
@@ -209,10 +249,8 @@ https://puzzle-tower-api.onrender.com/api/health
 
 ## Notes
 
-GitHub Pages can host the frontend only. The Express backend needs a separate server deployment such as Render.
+GitHub Pages can host the frontend only. Email login, ranking save, community map upload, custom block sharing, and admin APIs need the Express backend deployed separately.
 
-For Google login, create a Google OAuth client and set the authorized redirect URI to the deployed backend callback URL:
+The local SQLite file is created under `server/data/`. On free server platforms, use persistent storage or a hosted database if long-term records must survive restarts.
 
-```text
-https://puzzle-tower-api.onrender.com/api/auth/google/callback
-```
+AdSense may render a blank area until the site and ad slot are approved by Google AdSense.

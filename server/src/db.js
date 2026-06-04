@@ -64,8 +64,6 @@ function migrate() {
       email TEXT UNIQUE,
       password_hash TEXT,
       provider TEXT NOT NULL DEFAULT 'local',
-      google_id TEXT UNIQUE,
-      avatar_url TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -95,13 +93,28 @@ function migrate() {
       FOREIGN KEY (user_id) REFERENCES users(id),
       FOREIGN KEY (stage_id) REFERENCES stages(id)
     );
+
+    CREATE TABLE IF NOT EXISTS custom_blocks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      tile TEXT NOT NULL,
+      color TEXT NOT NULL,
+      effect TEXT NOT NULL,
+      move_cost INTEGER NOT NULL DEFAULT 1,
+      message TEXT,
+      code_data TEXT NOT NULL,
+      is_public INTEGER NOT NULL DEFAULT 1,
+      downloads INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
   `);
 
   addColumnIfMissing('users', 'email', 'TEXT');
   addColumnIfMissing('users', 'password_hash', 'TEXT');
   addColumnIfMissing('users', 'provider', "TEXT NOT NULL DEFAULT 'local'");
-  addColumnIfMissing('users', 'google_id', 'TEXT');
-  addColumnIfMissing('users', 'avatar_url', 'TEXT');
   addColumnIfMissing('stages', 'creator_id', 'INTEGER');
   addColumnIfMissing('stages', 'is_official', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('stages', 'is_public', 'INTEGER NOT NULL DEFAULT 1');

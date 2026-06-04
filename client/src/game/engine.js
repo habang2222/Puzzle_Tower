@@ -5,7 +5,7 @@ const directions = {
   right: { row: 0, col: 1 }
 };
 
-export function parseBoard(board) {
+export function parseBoard(board, customBlocks = []) {
   const tiles = board.map((row) => row.split(''));
   const teleports = {};
   let player = null;
@@ -21,7 +21,7 @@ export function parseBoard(board) {
       if (tile === 'G') {
         goal = point;
       }
-      if (isTeleport(tile)) {
+      if (isTeleport(tile, customBlocks)) {
         teleports[tile] = [...(teleports[tile] || []), point];
       }
     });
@@ -31,10 +31,12 @@ export function parseBoard(board) {
 }
 
 export function createInitialGame(stage) {
-  const parsed = parseBoard(stage.board);
+  const customBlocks = normalizeCustomBlocks(stage.customBlocks || stage.blocks || []);
+  const parsed = parseBoard(stage.board, customBlocks);
   return {
     ...parsed,
     stage,
+    customBlocks,
     movesUsed: 0,
     status: 'playing',
     hasKey: false,
@@ -58,29 +60,36 @@ export function movePlayer(game, directionName) {
   };
 
   const nextTile = getTile(game.tiles, next);
-  if (!nextTile || nextTile === '#') {
+  const customBlock = getCustomBlock(game.customBlocks, nextTile);
+
+  if (!nextTile || nextTile === '#' || customBlock?.effect === 'wall') {
     return { ...game, message: '벽은 지나갈 수 없습니다.' };
   }
 
-  if (nextTile === 'L' && !game.hasKey) {
+  if ((nextTile === 'L' || customBlock?.effect === 'lock') && !game.hasKey) {
     return { ...game, message: '열쇠가 있어야 잠금 타일을 지나갈 수 있습니다.' };
   }
 
   let player = next;
-  let hasKey = game.hasKey || nextTile === 'K';
+  let hasKey = game.hasKey || nextTile === 'K' || customBlock?.effect === 'key';
   let tiles = game.tiles.map((row) => [...row]);
-  let message = nextTile === 'K' ? '열쇠를 획득했습니다.' : '좋습니다. 계속 이동하세요.';
+  let message = customBlock?.message || (nextTile === 'K' ? '열쇠를 획득했습니다.' : '좋습니다. 계속 이동하세요.');
 
-  if (nextTile === 'K') {
+  if (nextTile === 'K' || customBlock?.effect === 'key') {
     tiles[next.row][next.col] = '.';
   }
 
-  if (nextTile === 'L' && hasKey) {
+  if ((nextTile === 'L' || customBlock?.effect === 'lock') && hasKey) {
     tiles[next.row][next.col] = '.';
     message = '잠금 타일이 열렸습니다.';
   }
 
-  if (isTeleport(nextTile)) {
+  if (customBlock?.effect === 'bounce') {
+    player = game.player;
+    message = customBlock.message || '튕겨 나왔습니다.';
+  }
+
+  if (isTeleport(nextTile, game.customBlocks)) {
     const pair = game.teleports[nextTile] || [];
     const exit = pair.find((point) => point.row !== next.row || point.col !== next.col);
     if (exit) {
@@ -89,9 +98,10 @@ export function movePlayer(game, directionName) {
     }
   }
 
-  const movesUsed = game.movesUsed + 1;
+  const moveCost = Math.max(Number(customBlock?.moveCost || 1), 1);
+  const movesUsed = game.movesUsed + moveCost;
   const status =
-    player.row === game.goal.row && player.col === game.goal.col
+    customBlock?.effect === 'goal' || (player.row === game.goal.row && player.col === game.goal.col)
       ? 'cleared'
       : movesUsed >= game.stage.moveLimit
         ? 'failed'
@@ -128,6 +138,17 @@ function getTile(tiles, point) {
   return tiles[point.row][point.col] ?? null;
 }
 
-function isTeleport(tile) {
+function isTeleport(tile, customBlocks = []) {
+  if (getCustomBlock(customBlocks, tile)) {
+    return false;
+  }
   return /^[A-Z]$/.test(tile) && !['P', 'G', 'K', 'L'].includes(tile);
+}
+
+function normalizeCustomBlocks(blocks) {
+  return Array.isArray(blocks) ? blocks.filter((block) => block && block.tile) : [];
+}
+
+function getCustomBlock(blocks, tile) {
+  return normalizeCustomBlocks(blocks).find((block) => block.tile === tile || block.symbol === tile);
 }

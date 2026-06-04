@@ -15,11 +15,6 @@ export function setAuthToken(token) {
   }
 }
 
-export function getGoogleLoginUrl() {
-  const redirect = window.location.origin + window.location.pathname;
-  return `${API_BASE_URL}/api/auth/google/start?redirect=${encodeURIComponent(redirect)}`;
-}
-
 export async function fetchHealth() {
   return request('/api/health');
 }
@@ -103,6 +98,45 @@ export async function deleteCommunityStage(stageId) {
   return request(`/api/community/stages/${stageId}`, {
     method: 'DELETE',
     auth: true
+  });
+}
+
+export async function fetchPublicBlocks() {
+  return request('/api/blocks');
+}
+
+export async function fetchMyBlocks() {
+  return request('/api/me/blocks', {
+    auth: true
+  });
+}
+
+export async function createCustomBlock(block) {
+  return request('/api/blocks', {
+    method: 'POST',
+    auth: true,
+    body: JSON.stringify(block)
+  });
+}
+
+export async function updateCustomBlock(blockId, block) {
+  return request(`/api/blocks/${blockId}`, {
+    method: 'PUT',
+    auth: true,
+    body: JSON.stringify(block)
+  });
+}
+
+export async function deleteCustomBlock(blockId) {
+  return request(`/api/blocks/${blockId}`, {
+    method: 'DELETE',
+    auth: true
+  });
+}
+
+export async function downloadCustomBlock(blockId) {
+  return request(`/api/blocks/${blockId}/download`, {
+    method: 'POST'
   });
 }
 

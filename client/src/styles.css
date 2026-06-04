@@ -103,13 +103,16 @@ textarea {
 }
 
 .topbar {
-  position: relative;
-  z-index: 10;
+  position: sticky;
+  top: 0;
+  z-index: 30;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 12px 0 18px;
+  background: rgba(17, 19, 23, 0.88);
+  backdrop-filter: blur(14px);
 }
 
 .brand-button {
@@ -359,6 +362,8 @@ h3 {
 }
 
 .game-sidebar {
+  position: sticky;
+  top: 92px;
   padding: 18px;
 }
 
@@ -459,6 +464,12 @@ h3 {
   background: linear-gradient(135deg, var(--magenta), var(--cyan));
 }
 
+.custom {
+  border-color: var(--custom-color, var(--magenta));
+  background: var(--custom-color, var(--magenta));
+  box-shadow: 0 0 18px rgba(255, 79, 216, 0.24);
+}
+
 .player {
   z-index: 2;
   border-color: #fff;
@@ -545,6 +556,20 @@ h3 {
 
 .admin-layout {
   min-height: auto;
+}
+
+.ad-shell {
+  position: fixed;
+  top: 112px;
+  right: 18px;
+  z-index: 5;
+  display: none;
+  width: 360px;
+  height: 800px;
+  overflow: hidden;
+  border: 1px solid rgba(66, 232, 242, 0.25);
+  border-radius: 8px;
+  background: rgba(17, 22, 29, 0.58);
 }
 
 .auth-layout,
@@ -722,6 +747,62 @@ h3 {
   padding: 0;
 }
 
+.block-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.block-code {
+  min-height: 190px;
+}
+
+.block-list {
+  display: grid;
+  gap: 8px;
+}
+
+.block-list h4 {
+  margin: 10px 0 2px;
+  color: var(--green);
+}
+
+.block-item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #141920;
+}
+
+.block-item strong,
+.block-item span {
+  display: block;
+}
+
+.block-item span {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+}
+
+.block-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 38px);
+  gap: 6px;
+}
+
+.block-actions button {
+  min-height: 38px;
+  padding: 0;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
@@ -817,6 +898,25 @@ h3 {
   .builder-board {
     grid-template-columns: repeat(var(--columns), minmax(30px, 1fr));
   }
+
+  .game-sidebar {
+    position: static;
+  }
+
+  .game-layout {
+    padding-bottom: 92px;
+  }
+
+  .move-pad {
+    position: sticky;
+    bottom: 10px;
+    z-index: 25;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(17, 19, 23, 0.9);
+    backdrop-filter: blur(12px);
+  }
 }
 
 @media (max-width: 520px) {
@@ -849,5 +949,20 @@ h3 {
   .palette-row,
   .auth-tabs {
     grid-template-columns: 1fr;
+  }
+
+  .block-item {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .block-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 1580px) {
+  .ad-shell {
+    display: block;
   }
 }
