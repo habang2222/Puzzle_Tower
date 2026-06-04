@@ -117,7 +117,8 @@ export function movePlayer(game, directionName) {
 
 export function calculateScore(stage, clearTime, movesUsed) {
   const remainingMoves = Math.max(stage.moveLimit - movesUsed, 0);
-  return Math.max(stage.level * 1000 + remainingMoves * 120 - clearTime * 8, stage.level * 100);
+  const levelWeight = Math.min(stage.level, 30);
+  return Math.max(levelWeight * 1000 + remainingMoves * 120 - clearTime * 8, levelWeight * 100);
 }
 
 function getTile(tiles, point) {

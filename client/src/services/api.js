@@ -1,6 +1,24 @@
 import { fallbackStages } from '../data/stages.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const authTokenKey = 'puzzle-tower-auth-token';
+
+export function getAuthToken() {
+  return localStorage.getItem(authTokenKey) || '';
+}
+
+export function setAuthToken(token) {
+  if (token) {
+    localStorage.setItem(authTokenKey, token);
+  } else {
+    localStorage.removeItem(authTokenKey);
+  }
+}
+
+export function getGoogleLoginUrl() {
+  const redirect = window.location.origin + window.location.pathname;
+  return `${API_BASE_URL}/api/auth/google/start?redirect=${encodeURIComponent(redirect)}`;
+}
 
 export async function fetchHealth() {
   return request('/api/health');
@@ -14,9 +32,30 @@ export async function fetchStages() {
   }
 }
 
+export async function registerUser(payload) {
+  return request('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function loginUser(payload) {
+  return request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchMe() {
+  return request('/api/auth/me', {
+    auth: true
+  });
+}
+
 export async function saveRecord(record) {
   return request('/api/records', {
     method: 'POST',
+    auth: true,
     body: JSON.stringify(record)
   });
 }
@@ -32,6 +71,39 @@ export async function fetchRankings(stageId = '', limit = 20) {
 
 export async function createStage(stage, token) {
   return adminRequest('/api/admin/stages', 'POST', stage, token);
+}
+
+export async function fetchCommunityStages() {
+  return request('/api/community/stages');
+}
+
+export async function fetchMyStages() {
+  return request('/api/me/stages', {
+    auth: true
+  });
+}
+
+export async function publishCommunityStage(stage) {
+  return request('/api/community/stages', {
+    method: 'POST',
+    auth: true,
+    body: JSON.stringify(stage)
+  });
+}
+
+export async function updateCommunityStage(stageId, stage) {
+  return request(`/api/community/stages/${stageId}`, {
+    method: 'PUT',
+    auth: true,
+    body: JSON.stringify(stage)
+  });
+}
+
+export async function deleteCommunityStage(stageId) {
+  return request(`/api/community/stages/${stageId}`, {
+    method: 'DELETE',
+    auth: true
+  });
 }
 
 export async function updateStage(stageId, stage, token) {
@@ -58,12 +130,21 @@ function adminRequest(path, method, body, token) {
 }
 
 async function request(path, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {})
+  };
+
+  if (options.auth) {
+    const token = getAuthToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    }
+    headers
   });
 
   if (!response.ok) {

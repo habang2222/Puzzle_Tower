@@ -11,5 +11,15 @@ services:
         value: production
       - key: ADMIN_TOKEN
         sync: false
+      - key: JWT_SECRET
+        sync: false
       - key: CLIENT_ORIGIN
         value: https://habang2222.github.io
+      - key: CLIENT_URL
+        value: https://habang2222.github.io/Puzzle_Tower/
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        value: https://puzzle-tower-api.onrender.com/api/auth/google/callback

@@ -7,39 +7,70 @@ import {
   BarChart3,
   Crown,
   DoorOpen,
+  Eraser,
+  Hammer,
   KeyRound,
   ListRestart,
   Lock,
+  LogIn,
   Pencil,
   Play,
   RotateCcw,
   Save,
   Shield,
   Sparkles,
+  Trash2,
   Trophy,
+  UploadCloud,
+  User,
+  UserPlus,
   Zap
 } from 'lucide-react';
 import { fallbackStages } from './data/stages.js';
 import { calculateScore, createInitialGame, movePlayer } from './game/engine.js';
 import {
   createStage,
+  deleteCommunityStage,
   deleteStage,
   fetchHealth,
+  fetchMe,
+  fetchMyStages,
   fetchRankings,
   fetchStages,
+  getAuthToken,
+  getGoogleLoginUrl,
+  loginUser,
+  publishCommunityStage,
+  registerUser,
   saveRecord,
+  setAuthToken,
+  updateCommunityStage,
   updateStage
 } from './services/api.js';
 
 const bestRecordKey = 'puzzle-tower-best-records';
 const nicknameKey = 'puzzle-tower-nickname';
+const palette = [
+  { tile: '.', label: '길' },
+  { tile: '#', label: '벽' },
+  { tile: 'P', label: '시작' },
+  { tile: 'G', label: '목표' },
+  { tile: 'K', label: '열쇠' },
+  { tile: 'L', label: '잠금' },
+  { tile: 'A', label: '포탈 A' },
+  { tile: 'B', label: '포탈 B' }
+];
 
 export default function App() {
   const [view, setView] = useState('home');
   const [nickname, setNickname] = useState(() => localStorage.getItem(nicknameKey) || 'player');
-  const [stages, setStages] = useState(fallbackStages);
-  const [selectedStage, setSelectedStage] = useState(fallbackStages[0]);
-  const [game, setGame] = useState(() => createInitialGame(fallbackStages[0]));
+  const [user, setUser] = useState(null);
+  const [authMode, setAuthMode] = useState('login');
+  const [authForm, setAuthForm] = useState({ nickname: '', email: '', password: '' });
+  const [authMessage, setAuthMessage] = useState('');
+  const [stages, setStages] = useState(fallbackStages.map((stage) => ({ ...stage, isOfficial: true })));
+  const [selectedStage, setSelectedStage] = useState({ ...fallbackStages[0], isOfficial: true });
+  const [game, setGame] = useState(() => createInitialGame({ ...fallbackStages[0], isOfficial: true }));
   const [elapsed, setElapsed] = useState(0);
   const [apiOnline, setApiOnline] = useState(false);
   const [rankings, setRankings] = useState([]);
@@ -49,9 +80,51 @@ export default function App() {
   const [adminToken, setAdminToken] = useState('');
   const [adminDraft, setAdminDraft] = useState('');
   const [adminMessage, setAdminMessage] = useState('');
+  const [builder, setBuilder] = useState(() => createBuilderState());
+  const [selectedTile, setSelectedTile] = useState('#');
+  const [builderMessage, setBuilderMessage] = useState('');
+  const [myStages, setMyStages] = useState([]);
 
   const movesRemaining = selectedStage.moveLimit - game.movesUsed;
   const currentBest = bestRecords[selectedStage.id];
+
+  const refreshStages = useCallback(async () => {
+    const loadedStages = await fetchStages();
+    if (!Array.isArray(loadedStages) || loadedStages.length === 0) {
+      return [];
+    }
+    const normalized = loadedStages.map(normalizeStage).sort(sortStages);
+    setStages(normalized);
+    setSelectedStage((current) => normalized.find((stage) => stage.id === current.id) || normalized[0]);
+    setGame((current) => (current.status === 'playing' ? current : createInitialGame(normalized[0])));
+    return normalized;
+  }, []);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const tokenFromGoogle = url.searchParams.get('token');
+    const authError = url.searchParams.get('auth_error');
+
+    if (tokenFromGoogle) {
+      setAuthToken(tokenFromGoogle);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    if (authError) {
+      setAuthMessage(authError === 'google-not-configured' ? '구글 로그인 환경변수가 아직 설정되지 않았습니다.' : '구글 로그인에 실패했습니다.');
+      setView('auth');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    const token = tokenFromGoogle || getAuthToken();
+    if (token) {
+      fetchMe()
+        .then(({ user: loadedUser }) => {
+          setUser(loadedUser);
+          setNickname(loadedUser.nickname);
+        })
+        .catch(() => setAuthToken(''));
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -68,20 +141,12 @@ export default function App() {
         }
       });
 
-    fetchStages().then((loadedStages) => {
-      if (!mounted || !Array.isArray(loadedStages) || loadedStages.length === 0) {
-        return;
-      }
-      const normalized = loadedStages.map(normalizeStage).sort((a, b) => a.level - b.level);
-      setStages(normalized);
-      setSelectedStage(normalized[0]);
-      setGame(createInitialGame(normalized[0]));
-    });
+    refreshStages().catch(() => setApiOnline(false));
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshStages]);
 
   useEffect(() => {
     if (view !== 'game' || game.status !== 'playing') {
@@ -96,8 +161,14 @@ export default function App() {
   }, [game.status, view]);
 
   useEffect(() => {
-    localStorage.setItem(nicknameKey, nickname.trim() || 'player');
-  }, [nickname]);
+    localStorage.setItem(nicknameKey, (user?.nickname || nickname).trim() || 'player');
+  }, [nickname, user]);
+
+  useEffect(() => {
+    if (view === 'builder' && user) {
+      loadMyStages();
+    }
+  }, [user, view]);
 
   useEffect(() => {
     if (game.status !== 'cleared' || recordSaved) {
@@ -105,8 +176,9 @@ export default function App() {
     }
 
     const score = calculateScore(selectedStage, elapsed, game.movesUsed);
+    const playerName = user?.nickname || nickname.trim() || 'player';
     const record = {
-      nickname: nickname.trim() || 'player',
+      nickname: playerName,
       stageId: selectedStage.id,
       clearTime: elapsed,
       moveUsed: game.movesUsed
@@ -128,7 +200,7 @@ export default function App() {
     saveRecord(record)
       .then(() => setApiOnline(true))
       .catch(() => setApiOnline(false));
-  }, [bestRecords, elapsed, game.movesUsed, game.status, nickname, recordSaved, selectedStage]);
+  }, [bestRecords, elapsed, game.movesUsed, game.status, nickname, recordSaved, selectedStage, user]);
 
   const startStage = useCallback((stage) => {
     setSelectedStage(stage);
@@ -145,13 +217,13 @@ export default function App() {
   }, [selectedStage]);
 
   const goNextStage = useCallback(() => {
-    const nextStage = stages.find((stage) => stage.level === selectedStage.level + 1);
+    const nextStage = selectedStage.isOfficial ? stages.find((stage) => stage.isOfficial && stage.level === selectedStage.level + 1) : null;
     if (nextStage) {
       startStage(nextStage);
     } else {
       setView('stages');
     }
-  }, [selectedStage.level, stages, startStage]);
+  }, [selectedStage, stages, startStage]);
 
   const handleMove = useCallback((direction) => {
     setGame((current) => movePlayer(current, direction));
@@ -203,6 +275,43 @@ export default function App() {
     }
   }, [loadRankings, view]);
 
+  const loadMyStages = async () => {
+    try {
+      const rows = await fetchMyStages();
+      setMyStages(rows.map(normalizeStage));
+      setApiOnline(true);
+    } catch (error) {
+      setMyStages([]);
+      setApiOnline(false);
+    }
+  };
+
+  const submitAuth = async (event) => {
+    event.preventDefault();
+    setAuthMessage('');
+
+    try {
+      const result =
+        authMode === 'signup'
+          ? await registerUser(authForm)
+          : await loginUser({ email: authForm.email, password: authForm.password });
+      setAuthToken(result.token);
+      setUser(result.user);
+      setNickname(result.user.nickname);
+      setAuthMessage('로그인되었습니다.');
+      setView('builder');
+    } catch (error) {
+      setAuthMessage(error.message);
+    }
+  };
+
+  const logout = () => {
+    setAuthToken('');
+    setUser(null);
+    setMyStages([]);
+    setView('home');
+  };
+
   const openAdminEditor = (stage) => {
     setAdminMessage('');
     setAdminDraft(JSON.stringify(stageToDraft(stage), null, 2));
@@ -225,10 +334,8 @@ export default function App() {
           ? await updateStage(parsed.id, payload, adminToken)
           : await createStage(payload, adminToken);
 
-      const refreshed = await fetchStages();
-      const normalized = refreshed.map(normalizeStage).sort((a, b) => a.level - b.level);
-      setStages(normalized);
-      setSelectedStage(normalizeStage(saved));
+      const normalized = await refreshStages();
+      setSelectedStage(normalized.find((stage) => stage.id === saved.id) || normalizeStage(saved));
       setAdminMessage('스테이지가 저장되었습니다.');
       setApiOnline(true);
     } catch (error) {
@@ -240,8 +347,7 @@ export default function App() {
     try {
       const parsed = JSON.parse(adminDraft);
       await deleteStage(parsed.id, adminToken);
-      const refreshed = await fetchStages();
-      setStages(refreshed.map(normalizeStage).sort((a, b) => a.level - b.level));
+      await refreshStages();
       setAdminMessage('스테이지가 삭제되었습니다.');
       setApiOnline(true);
     } catch (error) {
@@ -249,10 +355,114 @@ export default function App() {
     }
   };
 
+  const setBuilderField = (field, value) => {
+    setBuilder((current) => ({ ...current, [field]: value }));
+  };
+
+  const resizeBuilder = (rows, cols) => {
+    setBuilder((current) => {
+      const nextRows = Number(rows);
+      const nextCols = Number(cols);
+      const board = Array.from({ length: nextRows }, (_, rowIndex) =>
+        Array.from({ length: nextCols }, (_, colIndex) => current.board[rowIndex]?.[colIndex] || '.')
+      );
+      ensureSingleTile(board, 'P', 0, 0);
+      ensureSingleTile(board, 'G', nextRows - 1, nextCols - 1);
+      return { ...current, rows: nextRows, cols: nextCols, board };
+    });
+  };
+
+  const paintBuilderTile = (rowIndex, colIndex) => {
+    setBuilder((current) => {
+      const board = current.board.map((row) => [...row]);
+      if (selectedTile === 'P' || selectedTile === 'G') {
+        board.forEach((row) => {
+          row.forEach((tile, index) => {
+            if (tile === selectedTile) {
+              row[index] = '.';
+            }
+          });
+        });
+      }
+      board[rowIndex][colIndex] = selectedTile;
+      return { ...current, board };
+    });
+  };
+
+  const clearBuilder = () => {
+    setBuilder(createBuilderState());
+    setSelectedTile('#');
+    setBuilderMessage('');
+  };
+
+  const loadBuilderFromStage = (stage) => {
+    const board = stage.board.map((row) => row.split(''));
+    setBuilder({
+      id: stage.id,
+      title: stage.title,
+      difficulty: stage.difficulty,
+      moveLimit: stage.moveLimit,
+      rows: board.length,
+      cols: board[0]?.length || 6,
+      board
+    });
+    setBuilderMessage('내 맵을 편집 모드로 불러왔습니다.');
+    setView('builder');
+  };
+
+  const publishBuilder = async () => {
+    if (!user) {
+      setBuilderMessage('맵을 업로드하려면 로그인이 필요합니다.');
+      setView('auth');
+      return;
+    }
+
+    const validation = validateBuilder(builder);
+    if (!validation.ok) {
+      setBuilderMessage(validation.message);
+      return;
+    }
+
+    const payload = {
+      title: builder.title,
+      difficulty: builder.difficulty,
+      moveLimit: Number(builder.moveLimit),
+      board: boardToStrings(builder.board)
+    };
+
+    try {
+      const saved = builder.id ? await updateCommunityStage(builder.id, payload) : await publishCommunityStage(payload);
+      const normalized = normalizeStage(saved);
+      const refreshed = await refreshStages();
+      await loadMyStages();
+      setSelectedStage(refreshed.find((stage) => stage.id === normalized.id) || normalized);
+      setBuilder((current) => ({ ...current, id: normalized.id }));
+      setBuilderMessage(builder.id ? '맵이 수정되었습니다.' : '맵이 업로드되었습니다. 다른 플레이어도 스테이지 목록에서 플레이할 수 있습니다.');
+      setApiOnline(true);
+    } catch (error) {
+      setBuilderMessage(error.message);
+    }
+  };
+
+  const removeMyStage = async (stageId) => {
+    try {
+      await deleteCommunityStage(stageId);
+      await refreshStages();
+      await loadMyStages();
+      if (builder.id === stageId) {
+        clearBuilder();
+      }
+      setBuilderMessage('내 맵을 삭제했습니다.');
+    } catch (error) {
+      setBuilderMessage(error.message);
+    }
+  };
+
   const stageStats = useMemo(
     () => ({
       total: stages.length,
-      special: stages.filter((stage) => stage.level >= 10).length,
+      official: stages.filter((stage) => stage.isOfficial).length,
+      community: stages.filter((stage) => !stage.isOfficial).length,
       cleared: Object.keys(bestRecords).length
     }),
     [bestRecords, stages]
@@ -270,6 +480,10 @@ export default function App() {
             <DoorOpen size={18} />
             <span>스테이지</span>
           </button>
+          <button className={view === 'builder' ? 'active' : ''} onClick={() => setView('builder')} type="button">
+            <Hammer size={18} />
+            <span>제작</span>
+          </button>
           <button className={view === 'rankings' ? 'active' : ''} onClick={() => setView('rankings')} type="button">
             <Trophy size={18} />
             <span>랭킹</span>
@@ -277,6 +491,10 @@ export default function App() {
           <button className={view === 'admin' ? 'active' : ''} onClick={() => openAdminEditor(selectedStage)} type="button">
             <Shield size={18} />
             <span>관리</span>
+          </button>
+          <button className={view === 'auth' ? 'active' : ''} onClick={() => setView('auth')} type="button">
+            {user ? <User size={18} /> : <LogIn size={18} />}
+            <span>{user ? user.nickname : '로그인'}</span>
           </button>
         </nav>
       </header>
@@ -288,15 +506,16 @@ export default function App() {
               <p className="eyebrow">FULL-STACK PUZZLE GAME</p>
               <h1>Puzzle Tower</h1>
               <p className="intro-copy">
-                제한된 이동 횟수 안에 목표 지점까지 도달하세요. 벽, 포탈, 열쇠, 잠금 타일이 단계마다 추가됩니다.
+                직접 만든 맵을 업로드하고, 다른 플레이어가 만든 퍼즐까지 도전하세요. 벽, 포탈, 열쇠, 잠금 타일로 경로를 설계할 수 있습니다.
               </p>
               <div className="nickname-row">
                 <label htmlFor="nickname">플레이어</label>
                 <input
+                  disabled={Boolean(user)}
                   id="nickname"
                   maxLength={18}
                   onChange={(event) => setNickname(event.target.value)}
-                  value={nickname}
+                  value={user?.nickname || nickname}
                 />
               </div>
               <div className="hero-actions">
@@ -304,22 +523,28 @@ export default function App() {
                   <Play size={18} />
                   <span>바로 시작</span>
                 </button>
-                <button onClick={() => setView('stages')} type="button">
-                  <DoorOpen size={18} />
-                  <span>스테이지 선택</span>
+                <button onClick={() => setView('builder')} type="button">
+                  <Hammer size={18} />
+                  <span>맵 만들기</span>
                 </button>
+                {!user && (
+                  <button onClick={() => setView('auth')} type="button">
+                    <LogIn size={18} />
+                    <span>로그인</span>
+                  </button>
+                )}
               </div>
             </div>
 
             <div className="tower-panel" aria-label="게임 요약">
               <div className="tower-card">
                 <div>
-                  <span>총 스테이지</span>
-                  <strong>{stageStats.total}</strong>
+                  <span>공식</span>
+                  <strong>{stageStats.official}</strong>
                 </div>
                 <div>
-                  <span>특수 타일</span>
-                  <strong>{stageStats.special}</strong>
+                  <span>커뮤니티</span>
+                  <strong>{stageStats.community}</strong>
                 </div>
                 <div>
                   <span>내 클리어</span>
@@ -329,6 +554,90 @@ export default function App() {
               <MiniBoard stage={selectedStage} />
               <StatusPill online={apiOnline} />
             </div>
+          </section>
+        )}
+
+        {view === 'auth' && (
+          <section className="screen-section auth-layout">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">PLAYER ACCOUNT</p>
+                <h2>{user ? '계정' : authMode === 'signup' ? '회원가입' : '로그인'}</h2>
+              </div>
+              <StatusPill online={apiOnline} />
+            </div>
+
+            {user ? (
+              <div className="auth-card">
+                <div className="profile-row">
+                  <div className="profile-avatar">{user.nickname.slice(0, 1).toUpperCase()}</div>
+                  <div>
+                    <h3>{user.nickname}</h3>
+                    <p>{user.email || '게스트 계정'}</p>
+                  </div>
+                </div>
+                <div className="hero-actions">
+                  <button className="primary" onClick={() => setView('builder')} type="button">
+                    <Hammer size={18} />
+                    <span>내 맵 만들기</span>
+                  </button>
+                  <button onClick={logout} type="button">
+                    <LogIn size={18} />
+                    <span>로그아웃</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form className="auth-card" onSubmit={submitAuth}>
+                <div className="auth-tabs">
+                  <button className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')} type="button">
+                    <LogIn size={17} />
+                    <span>로그인</span>
+                  </button>
+                  <button className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')} type="button">
+                    <UserPlus size={17} />
+                    <span>회원가입</span>
+                  </button>
+                </div>
+                {authMode === 'signup' && (
+                  <>
+                    <label htmlFor="signup-nickname">닉네임</label>
+                    <input
+                      id="signup-nickname"
+                      maxLength={18}
+                      onChange={(event) => setAuthForm((current) => ({ ...current, nickname: event.target.value }))}
+                      value={authForm.nickname}
+                    />
+                  </>
+                )}
+                <label htmlFor="auth-email">이메일</label>
+                <input
+                  id="auth-email"
+                  onChange={(event) => setAuthForm((current) => ({ ...current, email: event.target.value }))}
+                  type="email"
+                  value={authForm.email}
+                />
+                <label htmlFor="auth-password">비밀번호</label>
+                <input
+                  id="auth-password"
+                  minLength={6}
+                  onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))}
+                  type="password"
+                  value={authForm.password}
+                />
+                <div className="hero-actions">
+                  <button className="primary" type="submit">
+                    {authMode === 'signup' ? <UserPlus size={18} /> : <LogIn size={18} />}
+                    <span>{authMode === 'signup' ? '가입하기' : '로그인'}</span>
+                  </button>
+                  <button onClick={() => { window.location.href = getGoogleLoginUrl(); }} type="button">
+                    <User size={18} />
+                    <span>Google 로그인</span>
+                  </button>
+                </div>
+                {authMessage && <p className="admin-message">{authMessage}</p>}
+              </form>
+            )}
           </section>
         )}
 
@@ -343,9 +652,9 @@ export default function App() {
             </div>
             <div className="stage-grid">
               {stages.map((stage) => (
-                <article className="stage-card" key={stage.id}>
+                <article className={stage.isOfficial ? 'stage-card' : 'stage-card community'} key={stage.id}>
                   <div className="stage-card-header">
-                    <span>LEVEL {stage.level}</span>
+                    <span>{stage.isOfficial ? `LEVEL ${stage.level}` : 'COMMUNITY'}</span>
                     <strong>{stage.difficulty}</strong>
                   </div>
                   <h3>{stage.title}</h3>
@@ -354,15 +663,25 @@ export default function App() {
                     <span>{stage.moveLimit} moves</span>
                     <span>{stage.board.length} x {stage.board[0]?.length || 0}</span>
                   </div>
+                  {!stage.isOfficial && <p className="stage-author">제작자: {stage.creatorNickname || 'player'}</p>}
                   <div className="stage-card-actions">
                     <button className="primary" onClick={() => startStage(stage)} type="button">
                       <Play size={16} />
                       <span>플레이</span>
                     </button>
-                    <button onClick={() => openAdminEditor(stage)} type="button">
-                      <Pencil size={16} />
-                      <span>수정</span>
-                    </button>
+                    {stage.isOfficial ? (
+                      <button onClick={() => openAdminEditor(stage)} type="button">
+                        <Pencil size={16} />
+                        <span>수정</span>
+                      </button>
+                    ) : (
+                      user?.id === stage.creatorId && (
+                        <button onClick={() => loadBuilderFromStage(stage)} type="button">
+                          <Pencil size={16} />
+                          <span>내 맵 수정</span>
+                        </button>
+                      )
+                    )}
                   </div>
                 </article>
               ))}
@@ -370,12 +689,140 @@ export default function App() {
           </section>
         )}
 
+        {view === 'builder' && (
+          <section className="screen-section builder-layout">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">MAP BUILDER</p>
+                <h2>맵 제작</h2>
+              </div>
+              <StatusPill online={apiOnline} />
+            </div>
+
+            {!user ? (
+              <div className="auth-card">
+                <h3>로그인 후 맵을 업로드할 수 있습니다.</h3>
+                <p className="intro-copy">회원가입 또는 Google 로그인으로 접속하면 직접 만든 맵이 서버에 저장되고 다른 플레이어도 플레이할 수 있습니다.</p>
+                <button className="primary" onClick={() => setView('auth')} type="button">
+                  <LogIn size={18} />
+                  <span>로그인하러 가기</span>
+                </button>
+              </div>
+            ) : (
+              <div className="builder-grid">
+                <div className="builder-panel">
+                  <label htmlFor="map-title">맵 이름</label>
+                  <input id="map-title" maxLength={40} onChange={(event) => setBuilderField('title', event.target.value)} value={builder.title} />
+                  <div className="builder-fields">
+                    <div>
+                      <label htmlFor="map-difficulty">난이도</label>
+                      <input id="map-difficulty" maxLength={20} onChange={(event) => setBuilderField('difficulty', event.target.value)} value={builder.difficulty} />
+                    </div>
+                    <div>
+                      <label htmlFor="map-moves">이동 제한</label>
+                      <input
+                        id="map-moves"
+                        max={99}
+                        min={1}
+                        onChange={(event) => setBuilderField('moveLimit', event.target.value)}
+                        type="number"
+                        value={builder.moveLimit}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="map-rows">행</label>
+                      <input
+                        id="map-rows"
+                        max={10}
+                        min={4}
+                        onChange={(event) => resizeBuilder(event.target.value, builder.cols)}
+                        type="number"
+                        value={builder.rows}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="map-cols">열</label>
+                      <input
+                        id="map-cols"
+                        max={10}
+                        min={4}
+                        onChange={(event) => resizeBuilder(builder.rows, event.target.value)}
+                        type="number"
+                        value={builder.cols}
+                      />
+                    </div>
+                  </div>
+                  <div className="palette-row">
+                    {palette.map((item) => (
+                      <button
+                        className={selectedTile === item.tile ? 'active' : ''}
+                        key={item.tile}
+                        onClick={() => setSelectedTile(item.tile)}
+                        type="button"
+                      >
+                        <span className={`palette-chip ${tileClass(item.tile)}`}>{tileLabel(item.tile) || item.tile}</span>
+                        <span>{item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="hero-actions">
+                    <button className="primary" onClick={publishBuilder} type="button">
+                      <UploadCloud size={18} />
+                      <span>{builder.id ? '수정 업로드' : '업로드'}</span>
+                    </button>
+                    <button onClick={clearBuilder} type="button">
+                      <Eraser size={18} />
+                      <span>새 맵</span>
+                    </button>
+                  </div>
+                  {builderMessage && <p className="admin-message">{builderMessage}</p>}
+                </div>
+
+                <div className="builder-board-wrap">
+                  <BuilderBoard board={builder.board} onPaint={paintBuilderTile} />
+                </div>
+
+                <div className="my-map-panel">
+                  <h3>내가 업로드한 맵</h3>
+                  {myStages.length === 0 ? (
+                    <p className="stage-author">아직 업로드한 맵이 없습니다.</p>
+                  ) : (
+                    <div className="my-map-list">
+                      {myStages.map((stage) => (
+                        <div className="my-map-item" key={stage.id}>
+                          <MiniBoard stage={stage} compact />
+                          <div>
+                            <strong>{stage.title}</strong>
+                            <span>{stage.moveLimit} moves</span>
+                          </div>
+                          <div className="my-map-actions">
+                            <button onClick={() => startStage(stage)} type="button">
+                              <Play size={16} />
+                            </button>
+                            <button onClick={() => loadBuilderFromStage(stage)} type="button">
+                              <Pencil size={16} />
+                            </button>
+                            <button onClick={() => removeMyStage(stage.id)} type="button">
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
         {view === 'game' && (
           <section className="game-layout">
             <aside className="game-sidebar">
               <div>
-                <p className="eyebrow">LEVEL {selectedStage.level}</p>
+                <p className="eyebrow">{selectedStage.isOfficial ? `LEVEL ${selectedStage.level}` : 'COMMUNITY MAP'}</p>
                 <h2>{selectedStage.title}</h2>
+                {!selectedStage.isOfficial && <p className="stage-author">제작자: {selectedStage.creatorNickname || 'player'}</p>}
               </div>
               <div className="stat-list">
                 <Stat label="남은 이동" value={movesRemaining} />
@@ -440,7 +887,7 @@ export default function App() {
                   <option value="">전체 스테이지</option>
                   {stages.map((stage) => (
                     <option key={stage.id} value={stage.id}>
-                      Lv.{stage.level} {stage.title}
+                      {stage.isOfficial ? `Lv.${stage.level}` : '커뮤니티'} {stage.title}
                     </option>
                   ))}
                 </select>
@@ -468,7 +915,7 @@ export default function App() {
                   <div className="ranking-row" key={record.id}>
                     <span>{index + 1}</span>
                     <span>{record.nickname}</span>
-                    <span>Lv.{record.level}</span>
+                    <span>{record.is_official === 0 ? '커뮤니티' : `Lv.${record.level}`}</span>
                     <span>{record.score}</span>
                     <span>{record.clear_time}s</span>
                   </div>
@@ -483,13 +930,13 @@ export default function App() {
             <div className="section-heading">
               <div>
                 <p className="eyebrow">ADMIN</p>
-                <h2>스테이지 관리</h2>
+                <h2>공식 스테이지 관리</h2>
               </div>
               <StatusPill online={apiOnline} />
             </div>
             <div className="admin-grid">
               <div className="admin-list">
-                {stages.map((stage) => (
+                {stages.filter((stage) => stage.isOfficial).map((stage) => (
                   <button key={stage.id} onClick={() => openAdminEditor(stage)} type="button">
                     <span>Lv.{stage.level}</span>
                     <strong>{stage.title}</strong>
@@ -585,6 +1032,20 @@ function MiniBoard({ compact = false, stage }) {
   );
 }
 
+function BuilderBoard({ board, onPaint }) {
+  return (
+    <div className="builder-board" style={{ '--columns': board[0]?.length || 1 }}>
+      {board.map((row, rowIndex) =>
+        row.map((tile, colIndex) => (
+          <button className={`tile ${tileClass(tile)}`} key={`${rowIndex}-${colIndex}`} onClick={() => onPaint(rowIndex, colIndex)} type="button">
+            {tileLabel(tile)}
+          </button>
+        ))
+      )}
+    </div>
+  );
+}
+
 function ResultOverlay({ elapsed, game, onNext, onRestart, score, stage }) {
   const cleared = game.status === 'cleared';
 
@@ -594,7 +1055,7 @@ function ResultOverlay({ elapsed, game, onNext, onRestart, score, stage }) {
         <p className="eyebrow">{cleared ? 'STAGE CLEARED' : 'FAILED'}</p>
         <h2>{cleared ? '탑을 한 층 올랐습니다' : '다시 경로를 계산하세요'}</h2>
         <div className="result-stats">
-          <Stat label="스테이지" value={`Lv.${stage.level}`} />
+          <Stat label="스테이지" value={stage.isOfficial ? `Lv.${stage.level}` : '커뮤니티'} />
           <Stat label="점수" value={cleared ? score : 0} />
           <Stat label="시간" value={`${elapsed}s`} />
           <Stat label="이동" value={`${game.movesUsed}/${stage.moveLimit}`} />
@@ -602,7 +1063,7 @@ function ResultOverlay({ elapsed, game, onNext, onRestart, score, stage }) {
         <div className="hero-actions">
           <button className="primary" onClick={cleared ? onNext : onRestart} type="button">
             {cleared ? <DoorOpen size={18} /> : <RotateCcw size={18} />}
-            <span>{cleared ? '다음 스테이지' : '재도전'}</span>
+            <span>{cleared ? '다음' : '재도전'}</span>
           </button>
           <button onClick={onRestart} type="button">
             <RotateCcw size={18} />
@@ -629,14 +1090,27 @@ function StatusPill({ online }) {
 
 function normalizeStage(stage) {
   const boardData = stage.board_data || stage.boardData || stage.board;
+  const isOfficial = stage.isOfficial ?? (stage.is_official === undefined ? true : stage.is_official !== 0);
   return {
     id: stage.id,
     level: stage.level,
     title: stage.title || `Level ${stage.level}`,
     difficulty: stage.difficulty,
     moveLimit: stage.moveLimit ?? stage.move_limit,
-    board: typeof boardData === 'string' ? JSON.parse(boardData).board || JSON.parse(boardData) : boardData
+    board: typeof boardData === 'string' ? JSON.parse(boardData).board || JSON.parse(boardData) : boardData,
+    creatorId: stage.creatorId ?? stage.creator_id,
+    creatorNickname: stage.creatorNickname ?? stage.creator_nickname,
+    isOfficial,
+    isPublic: stage.isPublic ?? (stage.is_public === undefined ? true : stage.is_public !== 0),
+    playCount: stage.playCount ?? stage.play_count ?? 0
   };
+}
+
+function sortStages(a, b) {
+  if (a.isOfficial !== b.isOfficial) {
+    return a.isOfficial ? -1 : 1;
+  }
+  return a.level - b.level;
 }
 
 function stageToDraft(stage) {
@@ -648,6 +1122,64 @@ function stageToDraft(stage) {
     moveLimit: stage.moveLimit,
     board: stage.board
   };
+}
+
+function createBuilderState() {
+  return {
+    id: null,
+    title: '내 퍼즐 맵',
+    difficulty: '커뮤니티',
+    moveLimit: 12,
+    rows: 6,
+    cols: 6,
+    board: [
+      ['P', '.', '.', '.', '.', '.'],
+      ['.', '#', '#', '.', '#', '.'],
+      ['.', '.', '.', '.', '#', '.'],
+      ['.', '#', '.', '#', '.', '.'],
+      ['.', '#', '.', '.', '.', 'G'],
+      ['.', '.', '.', '#', '.', '.']
+    ]
+  };
+}
+
+function ensureSingleTile(board, tile, fallbackRow, fallbackCol) {
+  let found = false;
+  board.forEach((row) => {
+    row.forEach((value, index) => {
+      if (value === tile) {
+        if (found) {
+          row[index] = '.';
+        }
+        found = true;
+      }
+    });
+  });
+
+  if (!found) {
+    board[fallbackRow][fallbackCol] = tile;
+  }
+}
+
+function boardToStrings(board) {
+  return board.map((row) => row.join(''));
+}
+
+function validateBuilder(builder) {
+  const board = boardToStrings(builder.board);
+  const flat = board.join('');
+
+  if (!builder.title.trim()) {
+    return { ok: false, message: '맵 이름을 입력하세요.' };
+  }
+  if (!Number.isInteger(Number(builder.moveLimit)) || Number(builder.moveLimit) < 1) {
+    return { ok: false, message: '이동 제한은 1 이상의 숫자여야 합니다.' };
+  }
+  if ((flat.match(/P/g) || []).length !== 1 || (flat.match(/G/g) || []).length !== 1) {
+    return { ok: false, message: '시작 타일과 목표 타일은 각각 하나씩 필요합니다.' };
+  }
+
+  return { ok: true };
 }
 
 function loadBestRecords() {
@@ -685,6 +1217,7 @@ function tileLabel(tile) {
   if (tile === 'G') return 'G';
   if (tile === 'K') return 'K';
   if (tile === 'L') return 'L';
+  if (tile === 'P') return 'P';
   if (/^[A-Z]$/.test(tile) && !['P', 'G', 'K', 'L'].includes(tile)) return tile;
   return '';
 }

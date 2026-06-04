@@ -61,6 +61,11 @@ function migrate() {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nickname TEXT NOT NULL UNIQUE,
+      email TEXT UNIQUE,
+      password_hash TEXT,
+      provider TEXT NOT NULL DEFAULT 'local',
+      google_id TEXT UNIQUE,
+      avatar_url TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -71,8 +76,12 @@ function migrate() {
       board_data TEXT NOT NULL,
       move_limit INTEGER NOT NULL,
       difficulty TEXT NOT NULL,
+      creator_id INTEGER,
+      is_official INTEGER NOT NULL DEFAULT 1,
+      is_public INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (creator_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS records (
@@ -87,6 +96,15 @@ function migrate() {
       FOREIGN KEY (stage_id) REFERENCES stages(id)
     );
   `);
+
+  addColumnIfMissing('users', 'email', 'TEXT');
+  addColumnIfMissing('users', 'password_hash', 'TEXT');
+  addColumnIfMissing('users', 'provider', "TEXT NOT NULL DEFAULT 'local'");
+  addColumnIfMissing('users', 'google_id', 'TEXT');
+  addColumnIfMissing('users', 'avatar_url', 'TEXT');
+  addColumnIfMissing('stages', 'creator_id', 'INTEGER');
+  addColumnIfMissing('stages', 'is_official', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing('stages', 'is_public', 'INTEGER NOT NULL DEFAULT 1');
 }
 
 function seed() {
@@ -115,4 +133,13 @@ function seed() {
 function persist() {
   const data = db.export();
   fs.writeFileSync(dbPath, Buffer.from(data));
+}
+
+function addColumnIfMissing(table, column, definition) {
+  const result = db.exec(`PRAGMA table_info(${table})`);
+  const columns = result[0]?.values.map((row) => row[1]) || [];
+
+  if (!columns.includes(column)) {
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
