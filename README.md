@@ -61,7 +61,7 @@ http://localhost:4000/api/health
 Create `client/.env` when the backend is deployed:
 
 ```env
-VITE_API_URL=https://your-backend.onrender.com
+VITE_API_URL=https://puzzle-tower.onrender.com
 ```
 
 Create `server/.env` if you want to change server settings:
@@ -230,7 +230,7 @@ Frontend URL format:
 https://habang2222.github.io/Puzzle_Tower/
 ```
 
-If your backend is deployed, add a repository variable or secret named `VITE_API_URL` with the backend URL.
+The frontend falls back to `https://puzzle-tower.onrender.com` on deployed pages. You can still override it with a repository variable or secret named `VITE_API_URL`.
 
 ### Backend: Render
 
@@ -244,7 +244,7 @@ Use `render.yaml` as a starting point, or create a Render Web Service manually:
 Backend API URL format:
 
 ```text
-https://puzzle-tower-api.onrender.com/api/health
+https://puzzle-tower.onrender.com/api/health
 ```
 
 ## Notes
