@@ -1370,10 +1370,73 @@ function BlockGuide({ onClose }) {
           </button>
         </div>
 
+        <div className="guide-intro">
+          <strong>처음이면 이 순서대로 하세요.</strong>
+          <ol>
+            <li>아래 예시 중 하나를 그대로 복사해서 코드 칸에 붙여넣습니다.</li>
+            <li>name은 블록 이름, tile은 보드에 찍을 알파벳 한 글자로 바꿉니다.</li>
+            <li>블록 저장을 누르면 팔레트에 새 블록이 생깁니다.</li>
+            <li>팔레트에서 그 블록을 고르고 보드 칸을 누르면 맵에 배치됩니다.</li>
+            <li>업로드를 누르면 다른 플레이어도 그 규칙이 들어간 맵을 플레이할 수 있습니다.</li>
+          </ol>
+        </div>
+
         <div className="guide-grid">
           <section>
-            <h3>기본 필드</h3>
-            <p>tile은 C~Z 한 글자입니다. A/B는 포탈 예약 문자라 사용할 수 없습니다.</p>
+            <h3>가장 쉬운 예시</h3>
+            <p>아래 코드는 밟으면 이동 횟수를 2칸 쓰는 진흙 블록입니다.</p>
+            <pre>{`{
+  "name": "진흙",
+  "tile": "C",
+  "color": "#a78bfa",
+  "effect": "slow",
+  "moveCost": 2,
+  "message": "진흙을 밟아 이동력이 더 소모됩니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>필수 기본 필드</h3>
+            <p>이 네 개만 이해하면 기본 블록을 만들 수 있습니다.</p>
+            <div className="guide-table">
+              <div><strong>name</strong><span>블록 이름입니다. 예: 진흙, 점프대, 비밀문</span></div>
+              <div><strong>tile</strong><span>맵에 표시될 알파벳입니다. C~Z 한 글자만 사용합니다. A/B는 포탈이라 제외됩니다.</span></div>
+              <div><strong>color</strong><span>블록 색상입니다. 반드시 #38bdf8 같은 #RRGGBB 형식입니다.</span></div>
+              <div><strong>effect</strong><span>블록의 동작입니다. 아래 효과 사전에서 골라 넣습니다.</span></div>
+            </div>
+          </section>
+
+          <section>
+            <h3>효과 사전</h3>
+            <p>effect에 넣을 수 있는 값입니다.</p>
+            <div className="guide-table compact">
+              <div><strong>floor</strong><span>그냥 지나갈 수 있는 일반 블록</span></div>
+              <div><strong>wall</strong><span>지나갈 수 없는 벽</span></div>
+              <div><strong>slow</strong><span>moveCost만큼 이동 횟수를 더 많이 씀</span></div>
+              <div><strong>bounce</strong><span>밟으면 원래 자리로 튕겨 돌아감</span></div>
+              <div><strong>key</strong><span>밟으면 열쇠를 얻고 블록이 사라짐</span></div>
+              <div><strong>lock</strong><span>열쇠가 있어야 통과하고, 통과하면 사라짐</span></div>
+              <div><strong>goal</strong><span>밟으면 스테이지 클리어</span></div>
+              <div><strong>force</strong><span>밟으면 outDirection 방향으로 한 칸 더 밀어냄</span></div>
+              <div><strong>oneway</strong><span>조건을 맞추면 outDirection 방향으로만 빠져나감</span></div>
+            </div>
+          </section>
+
+          <section>
+            <h3>방향 쓰는 법</h3>
+            <p>방향은 영어 소문자로 씁니다. 방향이 필요한 효과는 force, oneway입니다.</p>
+            <pre>{`"outDirection": "up"
+
+쓸 수 있는 방향:
+up    = 위
+down  = 아래
+left  = 왼쪽
+right = 오른쪽`}</pre>
+          </section>
+
+          <section>
+            <h3>한 방향 게이트</h3>
+            <p>오른쪽으로 들어왔을 때만 통과하고, 밟으면 위쪽으로 빠져나가는 블록입니다.</p>
             <pre>{`{
   "name": "위쪽 게이트",
   "tile": "C",
@@ -1381,43 +1444,67 @@ function BlockGuide({ onClose }) {
   "effect": "oneway",
   "moveCost": 1,
   "outDirection": "up",
-  "message": "위쪽으로 이동합니다."
+  "requires": {
+    "direction": "right"
+  },
+  "failMessage": "오른쪽에서 들어와야 합니다.",
+  "exitFailMessage": "위쪽 출구가 막혀 있습니다.",
+  "message": "위쪽으로 빠져나갑니다."
 }`}</pre>
           </section>
 
           <section>
-            <h3>조건과 if</h3>
-            <p>requires는 조건을 못 맞추면 막고, if는 조건을 맞춘 첫 규칙으로 효과를 바꿉니다.</p>
+            <h3>조건 requires</h3>
+            <p>requires는 조건을 못 맞추면 아예 못 지나가게 막습니다.</p>
+            <div className="guide-table compact">
+              <div><strong>hasKey</strong><span>true면 열쇠가 있어야 통과합니다.</span></div>
+              <div><strong>direction</strong><span>특정 방향으로 움직일 때만 통과합니다.</span></div>
+              <div><strong>movesUsedAtLeast</strong><span>이미 사용한 이동 횟수가 이 숫자 이상이어야 합니다.</span></div>
+              <div><strong>movesUsedAtMost</strong><span>이미 사용한 이동 횟수가 이 숫자 이하여야 합니다.</span></div>
+              <div><strong>movesRemainingAtLeast</strong><span>남은 이동 횟수가 이 숫자 이상이어야 합니다.</span></div>
+              <div><strong>movesRemainingAtMost</strong><span>남은 이동 횟수가 이 숫자 이하여야 합니다.</span></div>
+            </div>
+          </section>
+
+          <section>
+            <h3>if 규칙</h3>
+            <p>if는 조건을 만족할 때만 블록 효과를 바꿉니다. 위에서부터 확인하고, 맞는 첫 규칙만 적용됩니다.</p>
             <pre>{`{
-  "requires": { "direction": "up" },
-  "failMessage": "위 방향으로만 통과할 수 있습니다.",
+  "name": "열쇠 목표",
+  "tile": "D",
+  "color": "#facc15",
+  "effect": "floor",
+  "moveCost": 1,
   "if": [
     {
       "when": { "hasKey": true },
       "effect": "goal",
-      "message": "열쇠로 비밀 목표가 열렸습니다."
+      "message": "열쇠를 가진 상태라 클리어됩니다."
     }
   ]
 }`}</pre>
           </section>
 
           <section>
-            <h3>쓸 수 있는 값</h3>
-            <p>direction은 up, down, left, right를 사용합니다.</p>
-            <pre>{`effect:
-floor, wall, slow, bounce,
-key, lock, goal, force, oneway
+            <h3>여러 조건을 같이 쓰기</h3>
+            <p>조건 여러 개를 넣으면 모두 맞아야 통과합니다.</p>
+            <pre>{`{
+  "requires": {
+    "hasKey": true,
+    "direction": "up",
+    "movesRemainingAtLeast": 2
+  }
+}
 
-condition:
-hasKey
-direction
-movesUsedAtLeast / movesUsedAtMost
-movesRemainingAtLeast / movesRemainingAtMost`}</pre>
+뜻:
+열쇠가 있고,
+위로 움직이고,
+남은 이동 횟수가 2 이상일 때만 통과`}</pre>
           </section>
 
           <section>
-            <h3>이미지</h3>
-            <p>이미지 버튼을 누르면 image 필드가 자동으로 추가됩니다. 작은 png, jpg, webp, gif만 권장합니다.</p>
+            <h3>이미지 넣기</h3>
+            <p>이미지 버튼을 누르면 image 필드가 자동으로 추가됩니다. 직접 손으로 길게 입력하지 않아도 됩니다.</p>
             <pre>{`{
   "name": "사진 벽",
   "tile": "W",
@@ -1425,6 +1512,88 @@ movesRemainingAtLeast / movesRemainingAtMost`}</pre>
   "color": "#64748b",
   "image": "data:image/png;base64,..."
 }`}</pre>
+          </section>
+
+          <section>
+            <h3>이미지 주의사항</h3>
+            <p>이미지는 서버에 글자 데이터로 저장됩니다. 너무 큰 이미지는 저장이 막힙니다.</p>
+            <ul className="guide-list">
+              <li>png, jpg, webp, gif만 사용하세요.</li>
+              <li>가능하면 64x64 또는 128x128처럼 작은 이미지를 쓰세요.</li>
+              <li>앱의 이미지 버튼은 140KB 이하 파일만 받습니다.</li>
+              <li>이미지를 바꾸고 싶으면 image 줄을 지우고 다시 이미지 버튼을 누르세요.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h3>복붙 예시: 튕김 블록</h3>
+            <p>밟으면 이동 횟수는 쓰지만 위치는 원래 자리로 돌아갑니다.</p>
+            <pre>{`{
+  "name": "튕김 패드",
+  "tile": "F",
+  "color": "#f472b6",
+  "effect": "bounce",
+  "moveCost": 1,
+  "message": "튕겨 나왔습니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>복붙 예시: 강제 이동</h3>
+            <p>밟으면 오른쪽으로 한 칸 더 밀려납니다.</p>
+            <pre>{`{
+  "name": "오른쪽 바람",
+  "tile": "R",
+  "color": "#22d3ee",
+  "effect": "force",
+  "moveCost": 1,
+  "outDirection": "right",
+  "message": "바람이 오른쪽으로 밀었습니다.",
+  "exitFailMessage": "오른쪽이 막혀 이동하지 못했습니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>복붙 예시: 열쇠 문</h3>
+            <p>열쇠가 있어야 지나갈 수 있습니다. 지나가면 문이 사라집니다.</p>
+            <pre>{`{
+  "name": "초록 문",
+  "tile": "M",
+  "color": "#4ade80",
+  "effect": "lock",
+  "moveCost": 1,
+  "requires": { "hasKey": true },
+  "failMessage": "열쇠가 필요합니다.",
+  "message": "문이 열렸습니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>복붙 예시: 후반부에만 열리는 길</h3>
+            <p>이동을 5번 이상 사용한 뒤에만 지나갈 수 있습니다.</p>
+            <pre>{`{
+  "name": "늦게 열리는 길",
+  "tile": "T",
+  "color": "#fb923c",
+  "effect": "floor",
+  "moveCost": 1,
+  "requires": {
+    "movesUsedAtLeast": 5
+  },
+  "failMessage": "아직 열리지 않았습니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>자주 나는 오류</h3>
+            <ul className="guide-list">
+              <li>쉼표가 빠지면 저장이 안 됩니다. 각 줄 끝의 쉼표를 확인하세요.</li>
+              <li>tile은 C~Z 한 글자만 됩니다. A, B, P, G, K, L은 예약되어 있습니다.</li>
+              <li>color는 red 같은 단어가 아니라 #ff0000 형식이어야 합니다.</li>
+              <li>문자는 큰따옴표로 감싸야 합니다. 예: "effect": "slow"</li>
+              <li>true/false는 따옴표 없이 씁니다. 예: "hasKey": true</li>
+              <li>force/oneway에는 outDirection이 꼭 필요합니다.</li>
+            </ul>
           </section>
         </div>
       </div>
