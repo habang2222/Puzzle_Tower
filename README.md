@@ -76,11 +76,14 @@ PORT=4000
 CLIENT_ORIGIN=http://localhost:5173
 CLIENT_URL=http://localhost:5173
 ADMIN_TOKEN=change-this-token
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=replace-this-admin-password
 JWT_SECRET=replace-this-with-a-long-random-value
 PUZZLE_TOWER_DATA_DIR=./data
 ```
 
 `PUZZLE_TOWER_DATA_DIR` controls where `puzzle-tower.sqlite` is stored. Locally, the default is `server/data/`.
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 
 ## API List
 
@@ -316,7 +319,7 @@ Use `render.yaml` as a starting point, or create a Render Web Service manually:
 - Root directory: `server`
 - Build command: `npm install`
 - Start command: `npm start`
-- Environment variables: `ADMIN_TOKEN`, `JWT_SECRET`, `CLIENT_ORIGIN`, `CLIENT_URL`
+- Environment variables: `ADMIN_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`, `CLIENT_ORIGIN`, `CLIENT_URL`
 - Optional data directory: `PUZZLE_TOWER_DATA_DIR=/var/data`
 
 Important persistence note:

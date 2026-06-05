@@ -11,6 +11,10 @@ services:
         value: production
       - key: ADMIN_TOKEN
         sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
       - key: JWT_SECRET
         sync: false
       - key: PUZZLE_TOWER_DATA_DIR

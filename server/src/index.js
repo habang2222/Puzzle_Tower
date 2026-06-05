@@ -567,7 +567,8 @@ app.use((req, res) => {
   res.status(404).json({ message: 'API 경로를 찾을 수 없습니다.' });
 });
 
-initDatabase().then(() => {
+initDatabase().then(async () => {
+  await ensureConfiguredAdminLogin();
   app.listen(port, () => {
     console.log(`Puzzle Tower API listening on port ${port}`);
   });
@@ -669,6 +670,54 @@ function getCustomBlockById(id) {
 function getAdminUserId() {
   const admin = get('SELECT id FROM users WHERE nickname_key = ?', ['admin']);
   return admin?.id || null;
+}
+
+async function ensureConfiguredAdminLogin() {
+  const adminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const adminPassword = String(process.env.ADMIN_PASSWORD || '');
+
+  if (!adminEmail && !adminPassword) {
+    return;
+  }
+  if (!isEmail(adminEmail) || adminPassword.length < 6) {
+    console.warn('ADMIN_EMAIL and ADMIN_PASSWORD must be set to enable Admin account login.');
+    return;
+  }
+
+  const admin = get('SELECT * FROM users WHERE nickname_key = ?', ['admin']);
+  if (!admin) {
+    console.warn('Admin user was not found during startup.');
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(adminPassword, 10);
+  const emailOwner = get('SELECT * FROM users WHERE email = ?', [adminEmail]);
+
+  if (emailOwner && emailOwner.id !== admin.id) {
+    const fallbackNickname = `player${admin.id}`;
+    run('UPDATE stages SET creator_id = ? WHERE creator_id = ?', [emailOwner.id, admin.id]);
+    run('UPDATE users SET nickname = ?, nickname_key = ?, email = NULL, provider = ? WHERE id = ?', [
+      fallbackNickname,
+      createNicknameKey(fallbackNickname),
+      'guest',
+      admin.id
+    ]);
+    run('UPDATE users SET nickname = ?, nickname_key = ?, password_hash = ?, provider = ? WHERE id = ?', [
+      'Admin',
+      'admin',
+      passwordHash,
+      'admin',
+      emailOwner.id
+    ]);
+    return;
+  }
+
+  run('UPDATE users SET email = ?, password_hash = ?, provider = ? WHERE id = ?', [
+    adminEmail,
+    passwordHash,
+    'admin',
+    admin.id
+  ]);
 }
 
 function createSearchFilters(query, entityAlias, userAlias) {
