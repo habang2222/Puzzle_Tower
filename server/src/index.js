@@ -798,9 +798,10 @@ function createSearchFilters(query, entityAlias, userAlias) {
         OR LOWER(${entityAlias}.effect) LIKE ?
         OR LOWER(${entityAlias}.tile) LIKE ?
         OR LOWER(COALESCE(${entityAlias}.message, '')) LIKE ?
+        OR LOWER(COALESCE(${entityAlias}.code_data, '')) LIKE ?
         OR LOWER(${entityAlias}.tags) LIKE ?
       )`);
-      params.push(...Array(5).fill(`%${q}%`));
+      params.push(...Array(6).fill(`%${q}%`));
     } else {
       clauses.push(`(
         LOWER(${entityAlias}.title) LIKE ?
@@ -898,6 +899,7 @@ function toCustomBlock(row) {
     effect: row.effect,
     tags: safeParseJson(row.tags, []),
     moveCost: row.move_cost,
+    description: code.description || '',
     message: row.message || '',
     code,
     isPublic: row.is_public !== 0,
@@ -988,6 +990,7 @@ function normalizeCustomBlocks(blocks) {
     const color = String(code.color || rawBlock?.color || '#a78bfa').trim();
     const tags = parseTags(code.tags || rawBlock?.tags || '');
     const moveCost = clamp(Number(code.moveCost ?? rawBlock?.moveCost ?? rawBlock?.move_cost ?? 2), 1, 9);
+    const description = sanitizeDisplayText(code.description || code.tooltip || rawBlock?.description || rawBlock?.tooltip, 160, '');
     const message = sanitizeDisplayText(code.message || rawBlock?.message, 80, '');
     const failMessage = sanitizeDisplayText(code.failMessage || rawBlock?.failMessage, 80, '');
     const exitFailMessage = sanitizeDisplayText(code.exitFailMessage || rawBlock?.exitFailMessage, 80, '');
@@ -1040,6 +1043,7 @@ function normalizeCustomBlocks(blocks) {
       effect,
       tags,
       moveCost,
+      description,
       message,
       failMessage,
       exitFailMessage,
@@ -1059,6 +1063,7 @@ function normalizeCustomBlocks(blocks) {
       effect,
       tags,
       moveCost,
+      description,
       message,
       failMessage,
       exitFailMessage,

@@ -79,6 +79,7 @@ const defaultBlockCode = {
   effect: 'oneway',
   moveCost: 1,
   outDirection: 'up',
+  description: '이 블록 위에 서 있으면 위쪽으로만 빠져나갈 수 있습니다.',
   requires: {
     direction: 'up'
   },
@@ -1434,21 +1435,44 @@ function AdSlot() {
 function GameBoard({ game }) {
   const columns = game.tiles[0]?.length || 1;
   const customBlocks = game.customBlocks || [];
+  const currentBlock = getCurrentPlayerBlock(game);
 
   return (
-    <div className="board" style={{ '--columns': columns }}>
-      {game.tiles.map((row, rowIndex) =>
-        row.map((tile, colIndex) => {
-          const isPlayer = game.player.row === rowIndex && game.player.col === colIndex;
-          const className = ['tile', tileClass(tile, customBlocks), isPlayer ? 'player' : ''].filter(Boolean).join(' ');
-          return (
-            <div className={className} key={`${rowIndex}-${colIndex}`} style={tileStyle(tile, customBlocks)}>
-              {isPlayer ? <Crown size={24} /> : tileLabel(tile, customBlocks)}
-            </div>
-          );
-        })
-      )}
+    <div className="board-stack">
+      <div className="board" style={{ '--columns': columns }}>
+        {game.tiles.map((row, rowIndex) =>
+          row.map((tile, colIndex) => {
+            const isPlayer = game.player.row === rowIndex && game.player.col === colIndex;
+            const className = ['tile', tileClass(tile, customBlocks), isPlayer ? 'player' : ''].filter(Boolean).join(' ');
+            return (
+              <div className={className} key={`${rowIndex}-${colIndex}`} style={tileStyle(tile, customBlocks)}>
+                {isPlayer ? <Crown size={24} /> : tileLabel(tile, customBlocks)}
+              </div>
+            );
+          })
+        )}
+      </div>
+      <BlockDescriptionPanel block={currentBlock} />
     </div>
+  );
+}
+
+function BlockDescriptionPanel({ block }) {
+  if (!block) {
+    return null;
+  }
+
+  const description = block.description || createBlockSummary(block);
+  return (
+    <aside className="block-description" style={{ '--hint-color': block.color }} aria-live="polite">
+      <span className="block-description-chip" style={tileStyle(block.tile, [block])}>
+        {block.tile}
+      </span>
+      <div>
+        <strong>{block.name}</strong>
+        <p>{description}</p>
+      </div>
+    </aside>
   );
 }
 
@@ -1518,6 +1542,7 @@ function BlockItem({ block, onDownload, onEdit, onRemove }) {
           {block.effect}
           {block.outDirection ? ` ${block.outDirection}` : ''} · {block.moveCost} cost · {block.downloads || 0} downloads
         </span>
+        {block.description && <p className="block-item-description">{block.description}</p>}
         {block.tags?.length > 0 && <TagList tags={block.tags} />}
       </div>
       <div className="block-actions">
@@ -1582,6 +1607,7 @@ function BlockGuide({ onClose }) {
   "color": "#a78bfa",
   "effect": "slow",
   "moveCost": 2,
+  "description": "이 블록 위에 서 있으면 이동 횟수를 2칸 사용합니다.",
   "message": "진흙을 밟아 이동력이 더 소모됩니다."
 }`}</pre>
           </section>
@@ -1594,7 +1620,30 @@ function BlockGuide({ onClose }) {
               <div><strong>tile</strong><span>맵에 표시될 알파벳입니다. C~Z 한 글자만 사용합니다. A/B는 포탈이라 제외됩니다.</span></div>
               <div><strong>color</strong><span>블록 색상입니다. 반드시 #38bdf8 같은 #RRGGBB 형식입니다.</span></div>
               <div><strong>effect</strong><span>블록의 동작입니다. 아래 효과 사전에서 골라 넣습니다.</span></div>
+              <div><strong>description</strong><span>플레이어가 이 블록 위에 서 있을 때 보드 아래에 뜨는 설명문입니다.</span></div>
+              <div><strong>message</strong><span>블록을 밟는 순간 왼쪽 게임 메시지에 뜨는 짧은 결과 문장입니다.</span></div>
             </div>
+          </section>
+
+          <section>
+            <h3>description 쓰는 법</h3>
+            <p>description은 플레이어가 그 블록 위에 올라가 있는 동안 보드 아래에 표시됩니다. 블록의 규칙을 초보자도 알 수 있게 직접 써두세요.</p>
+            <pre>{`{
+  "name": "H 제거 발판",
+  "tile": "C",
+  "color": "#38bdf8",
+  "effect": "floor",
+  "moveCost": 1,
+  "description": "이 블록 위에 있으면 맵의 H 블록이 모두 사라집니다.",
+  "message": "H 블록이 사라졌습니다.",
+  "change": [
+    {
+      "targetTile": "H",
+      "tile": "."
+    }
+  ]
+}`}</pre>
+            <p>정리: description은 서 있을 때 설명, message는 밟았을 때 결과 알림입니다.</p>
           </section>
 
           <section>
@@ -1985,6 +2034,7 @@ function normalizeCustomBlock(block) {
   const rules = normalizeBlockRules(code.if || code.rules || block.if || block.rules || []);
   const spawn = normalizeBlockSpawns(code.spawn || code.spawns || code.change || code.changes || block.spawn || block.spawns || block.change || block.changes || []);
   const tags = parseTags(code.tags || block.tags || []);
+  const description = String(code.description || code.tooltip || block.description || block.tooltip || '').slice(0, 160);
   return {
     id: block.id || null,
     userId: block.userId ?? block.user_id,
@@ -1995,6 +2045,7 @@ function normalizeCustomBlock(block) {
     effect: String(code.effect || block.effect || 'slow').toLowerCase(),
     tags,
     moveCost: Number(code.moveCost ?? block.moveCost ?? block.move_cost ?? 2),
+    description,
     message: String(code.message || block.message || ''),
     failMessage: String(code.failMessage || block.failMessage || ''),
     exitFailMessage: String(code.exitFailMessage || block.exitFailMessage || ''),
@@ -2015,6 +2066,7 @@ function normalizeCustomBlock(block) {
       effect: String(code.effect || block.effect || 'slow').toLowerCase(),
       tags,
       moveCost: Number(code.moveCost ?? block.moveCost ?? block.move_cost ?? 2),
+      description,
       message: String(code.message || block.message || ''),
       failMessage: String(code.failMessage || block.failMessage || ''),
       exitFailMessage: String(code.exitFailMessage || block.exitFailMessage || ''),
@@ -2535,6 +2587,40 @@ function tileStyle(tile, customBlocks = []) {
   }
 
   return style;
+}
+
+function getCurrentPlayerBlock(game) {
+  const tile = game.tiles?.[game.player?.row]?.[game.player?.col];
+  if (!tile) {
+    return null;
+  }
+  return getCustomBlock(tile, game.customBlocks || []) || null;
+}
+
+function createBlockSummary(block) {
+  const effectLabels = {
+    floor: '일반 발판처럼 지나갈 수 있는 블록입니다.',
+    wall: '지나갈 수 없는 벽 블록입니다.',
+    slow: `이 블록 위에 있으면 이동 횟수를 ${block.moveCost || 1}칸 사용합니다.`,
+    bounce: '밟으면 원래 자리로 튕겨 돌아가는 블록입니다.',
+    goal: '밟으면 스테이지를 클리어하는 목표 블록입니다.',
+    key: '밟으면 열쇠를 얻는 블록입니다.',
+    lock: '열쇠가 있어야 지나갈 수 있는 잠금 블록입니다.',
+    force: `${directionLabel(block.outDirection)} 방향으로 한 칸 더 밀어내는 블록입니다.`,
+    oneway: `${directionLabel(block.outDirection)} 방향으로만 빠져나갈 수 있는 블록입니다.`,
+    gameover: '밟으면 즉시 실패하는 위험 블록입니다.'
+  };
+  return effectLabels[block.effect] || '커스텀 규칙이 적용된 블록입니다.';
+}
+
+function directionLabel(direction) {
+  const labels = {
+    up: '위',
+    down: '아래',
+    left: '왼쪽',
+    right: '오른쪽'
+  };
+  return labels[direction] || '지정된';
 }
 
 function getCustomBlock(tile, customBlocks = []) {

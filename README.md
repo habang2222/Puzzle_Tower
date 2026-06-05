@@ -161,6 +161,7 @@ DELETE /api/community/stages/:id
       "color": "#6ee7ff",
       "effect": "slow",
       "moveCost": 2,
+      "description": "이 블록 위에 서 있으면 이동 횟수를 2칸 사용합니다.",
       "message": "이 블록은 이동 횟수를 2 사용합니다."
     }
   ]
@@ -194,6 +195,7 @@ POST /api/blocks/:id/download
   "tags": ["gate", "logic"],
   "moveCost": 1,
   "outDirection": "up",
+  "description": "이 블록 위에 서 있으면 위쪽으로만 빠져나갈 수 있습니다.",
   "requires": {
     "direction": "right",
     "movesRemainingAtLeast": 1
@@ -261,6 +263,8 @@ Block transform commands:
 ```
 
 `spawn` and `change` mean the same thing. Without `afterSeconds`, the tile changes immediately. With `afterSeconds`, it changes after that many seconds.
+
+`description` is shown under the game board while the player is standing on that custom block. `message` is shown as the short game log text when the block is stepped on.
 
 Custom block images are stored as small data URLs in the `image` field. The app accepts png, jpg, webp, and gif images up to the server limit.
 

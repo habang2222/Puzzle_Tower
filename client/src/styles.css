@@ -449,6 +449,13 @@ h3 {
   gap: 18px;
 }
 
+.board-stack {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: min(100%, 680px);
+}
+
 .board {
   display: grid;
   grid-template-columns: repeat(var(--columns), minmax(36px, 72px));
@@ -521,6 +528,46 @@ h3 {
   color: #fff;
   background: #101418;
   box-shadow: 0 0 0 3px rgba(66, 232, 242, 0.35), 0 0 24px rgba(66, 232, 242, 0.45);
+}
+
+.block-description {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  width: min(100%, 640px);
+  min-height: 72px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--hint-color, var(--cyan)) 62%, #26303a);
+  border-radius: 8px;
+  color: var(--text);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--hint-color, var(--cyan)) 15%, transparent), rgba(15, 19, 25, 0.94)),
+    #10151b;
+  box-shadow: 0 0 24px color-mix(in srgb, var(--hint-color, var(--cyan)) 20%, transparent);
+}
+
+.block-description-chip {
+  display: grid;
+  width: 42px;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid var(--hint-color, var(--cyan));
+  border-radius: 8px;
+  font-weight: 900;
+  color: #fff;
+}
+
+.block-description strong {
+  display: block;
+  margin-bottom: 3px;
+  color: color-mix(in srgb, var(--hint-color, var(--cyan)) 42%, #fff);
+}
+
+.block-description p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.45;
 }
 
 .move-pad {
@@ -870,6 +917,13 @@ h3 {
 .block-item span {
   color: var(--text-soft);
   font-size: 0.84rem;
+}
+
+.block-item-description {
+  margin: 4px 0 0;
+  color: #b9c7d4;
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .block-actions {
