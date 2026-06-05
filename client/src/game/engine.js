@@ -113,29 +113,40 @@ export function movePlayer(game, directionName) {
     }
   }
 
-  if (customAction && customAction.effect !== 'bounce') {
+  if (customAction?.spawn?.length) {
+    tiles = applySpawnActions(tiles, customAction.spawn, player);
+  }
+
+  let forcedStatus = null;
+  if (customAction && customAction.effect !== 'bounce' && customAction.effect !== 'gameover') {
     const forcedResult = applyForcedExit({ ...game, tiles, player, hasKey }, customAction);
     if (forcedResult) {
       player = forcedResult.player;
       hasKey = forcedResult.hasKey;
       tiles = forcedResult.tiles;
       message = forcedResult.message;
+      forcedStatus = forcedResult.status || null;
     }
   }
 
   const moveCost = Math.max(Number(customAction?.moveCost || 1), 1);
   const movesUsed = game.movesUsed + moveCost;
   const status =
-    customAction?.effect === 'goal' || (player.row === game.goal.row && player.col === game.goal.col)
+    forcedStatus ||
+    (customAction?.effect === 'gameover'
+      ? 'failed'
+      : customAction?.effect === 'goal' || (player.row === game.goal.row && player.col === game.goal.col)
       ? 'cleared'
       : movesUsed >= game.stage.moveLimit
         ? 'failed'
-        : 'playing';
+        : 'playing');
 
   if (status === 'cleared') {
     message = '스테이지 클리어!';
   }
-  if (status === 'failed') {
+  if (status === 'failed' && customAction?.effect === 'gameover') {
+    message = customAction.message || '위험 블록을 밟았습니다. 게임오버!';
+  } else if (status === 'failed' && !forcedStatus) {
     message = '이동 횟수를 모두 사용했습니다.';
   }
 
@@ -207,6 +218,7 @@ function normalizeBlockAction(block) {
     consumeOnUse: block?.consumeOnUse === true,
     giveKey: block?.giveKey === true,
     takeKey: block?.takeKey === true,
+    spawn: normalizeSpawnItems(block?.spawn || block?.spawns || []),
     rules: normalizeRules(block?.if || block?.rules || [])
   };
 }
@@ -272,6 +284,54 @@ function createConditionContext(game, directionName) {
   };
 }
 
+function applySpawnActions(tiles, spawns, origin) {
+  const nextTiles = tiles.map((row) => [...row]);
+
+  normalizeSpawnItems(spawns).forEach((spawn) => {
+    if (spawn.targetTile) {
+      nextTiles.forEach((row) => {
+        row.forEach((tile, index) => {
+          if (tile === spawn.targetTile) {
+            row[index] = spawn.tile;
+          }
+        });
+      });
+      return;
+    }
+
+    const point = resolveSpawnPoint(spawn, origin);
+    if (point && getTile(nextTiles, point)) {
+      nextTiles[point.row][point.col] = spawn.tile;
+    }
+  });
+
+  return nextTiles;
+}
+
+function resolveSpawnPoint(spawn, origin) {
+  if (Number.isFinite(spawn.row) && Number.isFinite(spawn.col)) {
+    return {
+      row: spawn.row - 1,
+      col: spawn.col - 1
+    };
+  }
+
+  if (spawn.relative === 'current') {
+    return origin;
+  }
+
+  const direction = directions[spawn.relative];
+  if (!direction) {
+    return null;
+  }
+
+  const distance = Math.max(Math.min(Number(spawn.distance || 1), 9), 1);
+  return {
+    row: origin.row + direction.row * distance,
+    col: origin.col + direction.col * distance
+  };
+}
+
 function applyForcedExit(game, action) {
   const directionName = normalizeDirection(action.outDirection || (action.effect === 'force' ? action.direction : ''));
   if (!directionName) {
@@ -316,6 +376,22 @@ function applyForcedExit(game, action) {
     tiles[next.row][next.col] = '.';
   }
 
+  if (blockAction?.spawn?.length) {
+    applySpawnActions(tiles, blockAction.spawn, player).forEach((row, rowIndex) => {
+      tiles[rowIndex] = row;
+    });
+  }
+
+  if (blockAction?.effect === 'gameover') {
+    return {
+      player,
+      hasKey,
+      tiles,
+      status: 'failed',
+      message: blockAction.message || '위험 블록을 밟았습니다. 게임오버!'
+    };
+  }
+
   if (isTeleport(tile, game.customBlocks)) {
     const pair = game.teleports[tile] || [];
     const exit = pair.find((point) => point.row !== next.row || point.col !== next.col);
@@ -335,4 +411,41 @@ function applyForcedExit(game, action) {
 function normalizeDirection(value) {
   const direction = String(value || '').toLowerCase();
   return directions[direction] ? direction : '';
+}
+
+function normalizeSpawnItems(spawn) {
+  const items = Array.isArray(spawn) ? spawn : spawn ? [spawn] : [];
+
+  return items
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => {
+      const tile = normalizeSpawnTile(item.tile || item.to || item.place);
+      const targetTile = normalizeSpawnTile(item.targetTile || item.replaceTile || item.from);
+      const relativeValue = String(item.relative || item.direction || '').toLowerCase();
+      const relative = relativeValue === 'current' ? 'current' : normalizeDirection(relativeValue);
+      const row = Number(item.row);
+      const col = Number(item.col);
+      const distance = Math.max(Math.min(Number(item.distance || 1), 9), 1);
+
+      if (!tile) {
+        return null;
+      }
+
+      return {
+        tile,
+        ...(targetTile ? { targetTile } : {}),
+        ...(Number.isFinite(row) && Number.isFinite(col) ? { row: Math.round(row), col: Math.round(col) } : {}),
+        ...(relative ? { relative } : {}),
+        distance
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeSpawnTile(value) {
+  const tile = String(value || '').trim().slice(0, 1).toUpperCase();
+  if (tile !== 'P' && (tile === '.' || tile === '#' || ['G', 'K', 'L'].includes(tile) || /^[C-Z]$/.test(tile))) {
+    return tile;
+  }
+  return '';
 }

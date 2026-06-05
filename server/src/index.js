@@ -749,7 +749,7 @@ function normalizeCustomBlocks(blocks) {
 
   const usedTiles = new Set();
   const normalized = [];
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover']);
   const reservedTiles = new Set(['.', '#', 'P', 'G', 'K', 'L', 'A', 'B']);
 
   for (const rawBlock of blocks.slice(0, 12)) {
@@ -770,6 +770,7 @@ function normalizeCustomBlocks(blocks) {
     const image = normalizeBlockImage(code.image || code.imageData || rawBlock?.image || rawBlock?.imageData || '');
     const requires = normalizeCondition(code.requires || code.require || rawBlock?.requires || rawBlock?.require || null);
     const rules = normalizeRules(code.if || code.rules || rawBlock?.if || rawBlock?.rules || []);
+    const spawn = normalizeSpawns(code.spawn || code.spawns || rawBlock?.spawn || rawBlock?.spawns || []);
     const consumeOnUse = code.consumeOnUse === true || rawBlock?.consumeOnUse === true;
     const giveKey = code.giveKey === true || rawBlock?.giveKey === true;
     const takeKey = code.takeKey === true || rawBlock?.takeKey === true;
@@ -802,6 +803,9 @@ function normalizeCustomBlocks(blocks) {
     if (!rules.ok) {
       return { ok: false, message: rules.message };
     }
+    if (!spawn.ok) {
+      return { ok: false, message: spawn.message };
+    }
 
     usedTiles.add(tile);
     const codeData = {
@@ -819,6 +823,7 @@ function normalizeCustomBlocks(blocks) {
       consumeOnUse,
       giveKey,
       takeKey,
+      spawn: spawn.items,
       if: rules.rules
     };
     normalized.push({
@@ -836,6 +841,7 @@ function normalizeCustomBlocks(blocks) {
       consumeOnUse,
       giveKey,
       takeKey,
+      spawn: spawn.items,
       rules: rules.rules,
       isPublic,
       code: codeData
@@ -851,7 +857,7 @@ function normalizeRules(rules) {
   }
 
   const normalized = [];
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover']);
 
   for (const rule of rules.slice(0, 8)) {
     if (!rule || typeof rule !== 'object') {
@@ -865,12 +871,16 @@ function normalizeRules(rules) {
 
     const effect = rule.effect === undefined ? undefined : String(rule.effect).trim().toLowerCase();
     const outDirection = normalizeDirection(rule.outDirection || rule.exitDirection || '');
+    const spawn = normalizeSpawns(rule.spawn || rule.spawns || []);
 
     if (effect !== undefined && !allowedEffects.has(effect)) {
       return { ok: false, message: 'if 규칙에 지원하지 않는 효과가 있습니다.' };
     }
     if ((effect === 'force' || effect === 'oneway') && !outDirection) {
       return { ok: false, message: 'if 규칙의 force/oneway 효과에는 outDirection이 필요합니다.' };
+    }
+    if (!spawn.ok) {
+      return { ok: false, message: spawn.message };
     }
 
     normalized.push({
@@ -883,11 +893,60 @@ function normalizeRules(rules) {
       ...(rule.exitFailMessage === undefined ? {} : { exitFailMessage: String(rule.exitFailMessage).trim().slice(0, 80) }),
       ...(rule.consumeOnUse === undefined ? {} : { consumeOnUse: rule.consumeOnUse === true }),
       ...(rule.giveKey === undefined ? {} : { giveKey: rule.giveKey === true }),
-      ...(rule.takeKey === undefined ? {} : { takeKey: rule.takeKey === true })
+      ...(rule.takeKey === undefined ? {} : { takeKey: rule.takeKey === true }),
+      ...(spawn.items.length ? { spawn: spawn.items } : {})
     });
   }
 
   return { ok: true, rules: normalized };
+}
+
+function normalizeSpawns(spawn) {
+  const items = Array.isArray(spawn) ? spawn : spawn ? [spawn] : [];
+  if (items.length > 12) {
+    return { ok: false, message: 'spawn은 최대 12개까지만 넣을 수 있습니다.' };
+  }
+
+  const normalized = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, message: 'spawn 항목은 객체여야 합니다.' };
+    }
+
+    const tile = normalizeSpawnTile(item.tile || item.to || item.place);
+    const targetTile = normalizeSpawnTile(item.targetTile || item.replaceTile || item.from);
+    const row = Number(item.row);
+    const col = Number(item.col);
+    const relativeValue = String(item.relative || item.direction || '').trim().toLowerCase();
+    const relative = relativeValue === 'current' ? 'current' : normalizeDirection(relativeValue);
+    const distance = clamp(Number(item.distance || 1), 1, 9);
+
+    if (!tile) {
+      return { ok: false, message: 'spawn의 tile은 ., #, G, K, L 또는 C~Z 한 글자여야 합니다. P는 사용할 수 없습니다.' };
+    }
+
+    if ((item.row !== undefined || item.col !== undefined) && (!Number.isFinite(row) || !Number.isFinite(col) || row < 1 || col < 1)) {
+      return { ok: false, message: 'spawn의 row와 col은 1 이상의 숫자여야 합니다.' };
+    }
+
+    if ((item.relative !== undefined || item.direction !== undefined) && !relative) {
+      return { ok: false, message: 'spawn의 relative는 current, up, down, left, right 중 하나여야 합니다.' };
+    }
+
+    if (!targetTile && !(Number.isFinite(row) && Number.isFinite(col)) && !relative) {
+      return { ok: false, message: 'spawn에는 targetTile, row/col, relative 중 하나가 필요합니다.' };
+    }
+
+    normalized.push({
+      tile,
+      ...(targetTile ? { targetTile } : {}),
+      ...(Number.isFinite(row) && Number.isFinite(col) ? { row: Math.round(row), col: Math.round(col) } : {}),
+      ...(relative ? { relative } : {}),
+      distance
+    });
+  }
+
+  return { ok: true, items: normalized };
 }
 
 function normalizeCondition(condition) {
@@ -925,6 +984,14 @@ function normalizeCondition(condition) {
 function normalizeDirection(value) {
   const direction = String(value || '').trim().toLowerCase();
   return ['up', 'down', 'left', 'right'].includes(direction) ? direction : '';
+}
+
+function normalizeSpawnTile(value) {
+  const tile = String(value || '').trim().slice(0, 1).toUpperCase();
+  if (tile !== 'P' && (tile === '.' || tile === '#' || ['G', 'K', 'L'].includes(tile) || /^[C-Z]$/.test(tile))) {
+    return tile;
+  }
+  return '';
 }
 
 function normalizeBlockImage(value) {

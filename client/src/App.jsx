@@ -1417,6 +1417,7 @@ function BlockGuide({ onClose }) {
               <div><strong>key</strong><span>밟으면 열쇠를 얻고 블록이 사라짐</span></div>
               <div><strong>lock</strong><span>열쇠가 있어야 통과하고, 통과하면 사라짐</span></div>
               <div><strong>goal</strong><span>밟으면 스테이지 클리어</span></div>
+              <div><strong>gameover</strong><span>밟으면 즉시 실패 화면으로 이동</span></div>
               <div><strong>force</strong><span>밟으면 outDirection 방향으로 한 칸 더 밀어냄</span></div>
               <div><strong>oneway</strong><span>조건을 맞추면 outDirection 방향으로만 빠져나감</span></div>
             </div>
@@ -1503,6 +1504,19 @@ right = 오른쪽`}</pre>
           </section>
 
           <section>
+            <h3>spawn 명령</h3>
+            <p>spawn은 블록을 밟았을 때 맵의 다른 칸에 새 타일을 만들거나 바꿉니다.</p>
+            <div className="guide-table compact">
+              <div><strong>tile</strong><span>새로 만들 타일입니다. 예: "X"</span></div>
+              <div><strong>row</strong><span>몇 번째 줄인지 씁니다. 첫 번째 줄은 1입니다.</span></div>
+              <div><strong>col</strong><span>몇 번째 칸인지 씁니다. 첫 번째 칸은 1입니다.</span></div>
+              <div><strong>targetTile</strong><span>맵에 있는 특정 타일을 전부 바꿉니다. 예: "S"를 전부 "X"로 바꾸기</span></div>
+              <div><strong>relative</strong><span>밟은 위치 기준으로 만듭니다. current, up, down, left, right</span></div>
+              <div><strong>distance</strong><span>relative를 쓸 때 몇 칸 떨어진 곳인지 씁니다. 생략하면 1입니다.</span></div>
+            </div>
+          </section>
+
+          <section>
             <h3>이미지 넣기</h3>
             <p>이미지 버튼을 누르면 image 필드가 자동으로 추가됩니다. 직접 손으로 길게 입력하지 않아도 됩니다.</p>
             <pre>{`{
@@ -1554,6 +1568,75 @@ right = 오른쪽`}</pre>
           </section>
 
           <section>
+            <h3>복붙 예시: H 발판과 게임오버 블록</h3>
+            <p>코드 칸에는 한 번에 블록 하나만 저장합니다. 먼저 X 블록을 저장하고, 그다음 H 발판을 저장하세요.</p>
+            <p>1. 먼저 이 X 블록을 저장합니다.</p>
+            <pre>{`{
+  "name": "게임오버 함정",
+  "tile": "X",
+  "color": "#fb315f",
+  "effect": "gameover",
+  "moveCost": 1,
+  "message": "함정을 밟았습니다. 게임오버!"
+}`}</pre>
+            <p>2. 그다음 이 H 발판을 저장합니다.</p>
+            <pre>{`{
+  "name": "H 발판",
+  "tile": "H",
+  "color": "#38bdf8",
+  "effect": "floor",
+  "moveCost": 1,
+  "message": "게임오버 함정이 나타났습니다.",
+  "spawn": [
+    {
+      "tile": "X",
+      "row": 3,
+      "col": 5
+    }
+  ]
+}`}</pre>
+            <p>뜻: H를 밟으면 3번째 줄, 5번째 칸에 X가 생기고, 그 X를 밟으면 게임오버됩니다.</p>
+          </section>
+
+          <section>
+            <h3>복붙 예시: 특정 표시칸을 함정으로 바꾸기</h3>
+            <p>row와 col을 세기 어렵다면 S 같은 표시 블록을 맵에 미리 놓고, H를 밟으면 S를 전부 X로 바꿀 수 있습니다.</p>
+            <p>1. 표시칸 S를 먼저 저장합니다.</p>
+            <pre>{`{
+  "name": "숨은 함정 자리",
+  "tile": "S",
+  "color": "#334155",
+  "effect": "floor",
+  "moveCost": 1,
+  "message": "아직은 안전합니다."
+}`}</pre>
+            <p>2. 게임오버 X도 저장합니다.</p>
+            <pre>{`{
+  "name": "게임오버 함정",
+  "tile": "X",
+  "color": "#fb315f",
+  "effect": "gameover",
+  "moveCost": 1,
+  "message": "함정을 밟았습니다. 게임오버!"
+}`}</pre>
+            <p>3. H 발판은 이렇게 저장합니다.</p>
+            <pre>{`{
+  "name": "H 발판",
+  "tile": "H",
+  "color": "#38bdf8",
+  "effect": "floor",
+  "moveCost": 1,
+  "message": "숨은 함정이 드러났습니다.",
+  "spawn": [
+    {
+      "targetTile": "S",
+      "tile": "X"
+    }
+  ]
+}`}</pre>
+          </section>
+
+          <section>
             <h3>복붙 예시: 열쇠 문</h3>
             <p>열쇠가 있어야 지나갈 수 있습니다. 지나가면 문이 사라집니다.</p>
             <pre>{`{
@@ -1593,6 +1676,7 @@ right = 오른쪽`}</pre>
               <li>문자는 큰따옴표로 감싸야 합니다. 예: "effect": "slow"</li>
               <li>true/false는 따옴표 없이 씁니다. 예: "hasKey": true</li>
               <li>force/oneway에는 outDirection이 꼭 필요합니다.</li>
+              <li>spawn의 row와 col은 0이 아니라 1부터 셉니다.</li>
             </ul>
           </section>
         </div>
@@ -1668,6 +1752,7 @@ function normalizeCustomBlock(block) {
   const outDirection = normalizeDirectionValue(code.outDirection || code.exitDirection || block.outDirection || block.exitDirection || '');
   const requires = normalizeBlockCondition(code.requires || code.require || block.requires || block.require || null);
   const rules = normalizeBlockRules(code.if || code.rules || block.if || block.rules || []);
+  const spawn = normalizeBlockSpawns(code.spawn || code.spawns || block.spawn || block.spawns || []);
   return {
     id: block.id || null,
     userId: block.userId ?? block.user_id,
@@ -1686,6 +1771,7 @@ function normalizeCustomBlock(block) {
     consumeOnUse: code.consumeOnUse === true || block.consumeOnUse === true,
     giveKey: code.giveKey === true || block.giveKey === true,
     takeKey: code.takeKey === true || block.takeKey === true,
+    spawn,
     rules,
     isPublic: block.isPublic ?? (block.is_public === undefined ? true : block.is_public !== 0),
     downloads: block.downloads || 0,
@@ -1704,6 +1790,7 @@ function normalizeCustomBlock(block) {
       consumeOnUse: code.consumeOnUse === true || block.consumeOnUse === true,
       giveKey: code.giveKey === true || block.giveKey === true,
       takeKey: code.takeKey === true || block.takeKey === true,
+      spawn,
       if: rules
     }
   };
@@ -1711,7 +1798,7 @@ function normalizeCustomBlock(block) {
 
 function parseBlockDraft(draft) {
   const parsed = safeJsonParse(draft, null);
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover']);
   const reservedTiles = new Set(['.', '#', 'P', 'G', 'K', 'L', 'A', 'B']);
 
   if (!parsed || typeof parsed !== 'object') {
@@ -1727,7 +1814,7 @@ function parseBlockDraft(draft) {
     return { ok: false, message: 'name이 필요합니다.' };
   }
   if (!allowedEffects.has(block.effect)) {
-    return { ok: false, message: 'effect는 slow, wall, bounce, goal, key, lock, floor, force, oneway 중 하나여야 합니다.' };
+    return { ok: false, message: 'effect는 slow, wall, bounce, goal, key, lock, floor, force, oneway, gameover 중 하나여야 합니다.' };
   }
   if ((block.effect === 'force' || block.effect === 'oneway') && !block.outDirection) {
     return { ok: false, message: 'force/oneway 효과에는 outDirection이 필요합니다.' };
@@ -1747,6 +1834,11 @@ function parseBlockDraft(draft) {
     return conditionValidation;
   }
 
+  const spawnValidation = validateBlockSpawns(parsed.spawn || parsed.spawns || []);
+  if (!spawnValidation.ok) {
+    return spawnValidation;
+  }
+
   const rulesValidation = validateBlockRules(parsed.if || parsed.rules || []);
   if (!rulesValidation.ok) {
     return rulesValidation;
@@ -1764,8 +1856,33 @@ function mergeBlocks(current, incoming) {
 }
 
 function getUsedCustomBlocks(board, customBlocks) {
+  const blockMap = new Map(customBlocks.map(normalizeCustomBlock).map((block) => [block.tile, block]));
   const usedTiles = new Set(board.flat());
-  return customBlocks.filter((block) => usedTiles.has(block.tile));
+  const queue = [...usedTiles];
+
+  while (queue.length) {
+    const tile = queue.shift();
+    const block = blockMap.get(tile);
+    if (!block) {
+      continue;
+    }
+
+    getSpawnTiles(block).forEach((spawnTile) => {
+      if (blockMap.has(spawnTile) && !usedTiles.has(spawnTile)) {
+        usedTiles.add(spawnTile);
+        queue.push(spawnTile);
+      }
+    });
+  }
+
+  return [...usedTiles].map((tile) => blockMap.get(tile)).filter(Boolean).sort((a, b) => a.tile.localeCompare(b.tile));
+}
+
+function getSpawnTiles(block) {
+  return [
+    ...(block.spawn || []),
+    ...(block.rules || []).flatMap((rule) => rule.spawn || [])
+  ].map((spawn) => spawn.tile).filter(Boolean);
 }
 
 function sortStages(a, b) {
@@ -1852,18 +1969,52 @@ function normalizeBlockRules(rules) {
   return rules
     .filter((rule) => rule && typeof rule === 'object')
     .slice(0, 8)
-    .map((rule) => ({
-      when: normalizeBlockCondition(rule.when || rule.condition || {}),
-      ...(rule.effect === undefined ? {} : { effect: String(rule.effect).toLowerCase() }),
-      ...(rule.moveCost === undefined ? {} : { moveCost: Number(rule.moveCost) }),
-      ...(normalizeDirectionValue(rule.outDirection || rule.exitDirection) ? { outDirection: normalizeDirectionValue(rule.outDirection || rule.exitDirection) } : {}),
-      ...(rule.message === undefined ? {} : { message: String(rule.message) }),
-      ...(rule.failMessage === undefined ? {} : { failMessage: String(rule.failMessage) }),
-      ...(rule.exitFailMessage === undefined ? {} : { exitFailMessage: String(rule.exitFailMessage) }),
-      ...(rule.consumeOnUse === undefined ? {} : { consumeOnUse: rule.consumeOnUse === true }),
-      ...(rule.giveKey === undefined ? {} : { giveKey: rule.giveKey === true }),
-      ...(rule.takeKey === undefined ? {} : { takeKey: rule.takeKey === true })
-    }));
+    .map((rule) => {
+      const spawn = normalizeBlockSpawns(rule.spawn || rule.spawns || []);
+      return {
+        when: normalizeBlockCondition(rule.when || rule.condition || {}),
+        ...(rule.effect === undefined ? {} : { effect: String(rule.effect).toLowerCase() }),
+        ...(rule.moveCost === undefined ? {} : { moveCost: Number(rule.moveCost) }),
+        ...(normalizeDirectionValue(rule.outDirection || rule.exitDirection) ? { outDirection: normalizeDirectionValue(rule.outDirection || rule.exitDirection) } : {}),
+        ...(rule.message === undefined ? {} : { message: String(rule.message) }),
+        ...(rule.failMessage === undefined ? {} : { failMessage: String(rule.failMessage) }),
+        ...(rule.exitFailMessage === undefined ? {} : { exitFailMessage: String(rule.exitFailMessage) }),
+        ...(rule.consumeOnUse === undefined ? {} : { consumeOnUse: rule.consumeOnUse === true }),
+        ...(rule.giveKey === undefined ? {} : { giveKey: rule.giveKey === true }),
+        ...(rule.takeKey === undefined ? {} : { takeKey: rule.takeKey === true }),
+        ...(spawn.length ? { spawn } : {})
+      };
+    });
+}
+
+function normalizeBlockSpawns(spawn) {
+  const items = Array.isArray(spawn) ? spawn : spawn ? [spawn] : [];
+
+  return items
+    .filter((item) => item && typeof item === 'object')
+    .slice(0, 12)
+    .map((item) => {
+      const tile = normalizeSpawnTile(item.tile || item.to || item.place);
+      const targetTile = normalizeSpawnTile(item.targetTile || item.replaceTile || item.from);
+      const relativeValue = String(item.relative || item.direction || '').toLowerCase();
+      const relative = relativeValue === 'current' ? 'current' : normalizeDirectionValue(relativeValue);
+      const row = Number(item.row);
+      const col = Number(item.col);
+      const distance = Number(item.distance);
+
+      if (!tile) {
+        return null;
+      }
+
+      return {
+        tile,
+        ...(targetTile ? { targetTile } : {}),
+        ...(Number.isFinite(row) && Number.isFinite(col) ? { row: Math.round(row), col: Math.round(col) } : {}),
+        ...(relative ? { relative } : {}),
+        ...(Number.isFinite(distance) ? { distance: Math.max(1, Math.min(Math.round(distance), 9)) } : {})
+      };
+    })
+    .filter(Boolean);
 }
 
 function normalizeBlockCondition(condition) {
@@ -1919,7 +2070,7 @@ function validateBlockRules(rules) {
     return { ok: false, message: 'if는 배열이어야 합니다.' };
   }
 
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover']);
 
   for (const rule of rules) {
     if (!rule || typeof rule !== 'object') {
@@ -1940,6 +2091,50 @@ function validateBlockRules(rules) {
     if ((rule.outDirection || rule.exitDirection) && !outDirection) {
       return { ok: false, message: 'if 규칙의 outDirection은 up, down, left, right 중 하나여야 합니다.' };
     }
+    const spawnValidation = validateBlockSpawns(rule.spawn || rule.spawns || []);
+    if (!spawnValidation.ok) {
+      return spawnValidation;
+    }
+  }
+
+  return { ok: true };
+}
+
+function validateBlockSpawns(spawn) {
+  const items = Array.isArray(spawn) ? spawn : spawn ? [spawn] : [];
+  if (items.length > 12) {
+    return { ok: false, message: 'spawn은 최대 12개까지만 넣을 수 있습니다.' };
+  }
+
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, message: 'spawn 항목은 JSON 객체여야 합니다.' };
+    }
+
+    if (!normalizeSpawnTile(item.tile || item.to || item.place)) {
+      return { ok: false, message: 'spawn의 tile은 ., #, G, K, L 또는 C~Z 한 글자여야 합니다. P는 사용할 수 없습니다.' };
+    }
+
+    const hasTargetTile = Boolean(normalizeSpawnTile(item.targetTile || item.replaceTile || item.from));
+    const hasPosition = item.row !== undefined || item.col !== undefined;
+    const hasRelative = item.relative !== undefined || item.direction !== undefined;
+
+    if (hasPosition) {
+      if (!Number.isFinite(Number(item.row)) || !Number.isFinite(Number(item.col)) || Number(item.row) < 1 || Number(item.col) < 1) {
+        return { ok: false, message: 'spawn의 row와 col은 1 이상의 숫자여야 합니다.' };
+      }
+    }
+
+    if (hasRelative) {
+      const relative = String(item.relative || item.direction || '').toLowerCase();
+      if (relative !== 'current' && !normalizeDirectionValue(relative)) {
+        return { ok: false, message: 'spawn의 relative는 current, up, down, left, right 중 하나여야 합니다.' };
+      }
+    }
+
+    if (!hasTargetTile && !hasPosition && !hasRelative) {
+      return { ok: false, message: 'spawn에는 targetTile, row/col, relative 중 하나가 필요합니다.' };
+    }
   }
 
   return { ok: true };
@@ -1948,6 +2143,14 @@ function validateBlockRules(rules) {
 function normalizeDirectionValue(value) {
   const direction = String(value || '').toLowerCase();
   return ['up', 'down', 'left', 'right'].includes(direction) ? direction : '';
+}
+
+function normalizeSpawnTile(value) {
+  const tile = String(value || '').trim().slice(0, 1).toUpperCase();
+  if (tile !== 'P' && (tile === '.' || tile === '#' || ['G', 'K', 'L'].includes(tile) || /^[C-Z]$/.test(tile))) {
+    return tile;
+  }
+  return '';
 }
 
 function isValidBlockImage(image) {
