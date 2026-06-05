@@ -291,6 +291,42 @@ h3 {
   gap: 16px;
 }
 
+.search-panel,
+.mini-search-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.search-panel {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+}
+
+.mini-search-panel {
+  grid-template-columns: 1fr 1fr 1fr auto;
+  margin: 8px 0 12px;
+}
+
+.search-panel input,
+.mini-search-panel input {
+  min-width: 0;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tag-list span {
+  border: 1px solid rgba(77, 224, 213, 0.28);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  padding: 3px 7px;
+}
+
 .stage-card {
   padding: 16px;
   border: 1px solid var(--line);
@@ -1035,6 +1071,11 @@ h3 {
     grid-template-columns: 1fr;
   }
 
+  .search-panel,
+  .mini-search-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .intro-panel {
     padding: 24px;
   }
@@ -1111,7 +1152,9 @@ h3 {
 
   .builder-fields,
   .palette-row,
-  .auth-tabs {
+  .auth-tabs,
+  .search-panel,
+  .mini-search-panel {
     grid-template-columns: 1fr;
   }
 

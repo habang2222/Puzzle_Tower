@@ -15,8 +15,13 @@ Puzzle Tower is a full-stack web puzzle game. Players clear tile stages with a m
 - Custom block editor with safe JSON block rules
 - Public custom block library and download API
 - Public community map list
+- Community map tags, search, and creator filters
+- Public custom block tags, search, and creator filters
+- Creator must clear a custom map once before upload
 - Ranking save and lookup API
 - Admin stage CRUD API
+- Reserved Admin nickname protection with unicode/control-character filtering
+- Configurable SQLite data directory for persistent storage
 - Responsive sticky game controls
 - AdSense slot integration
 - GitHub Pages deployment workflow for the frontend
@@ -72,7 +77,10 @@ CLIENT_ORIGIN=http://localhost:5173
 CLIENT_URL=http://localhost:5173
 ADMIN_TOKEN=change-this-token
 JWT_SECRET=replace-this-with-a-long-random-value
+PUZZLE_TOWER_DATA_DIR=./data
 ```
+
+`PUZZLE_TOWER_DATA_DIR` controls where `puzzle-tower.sqlite` is stored. Locally, the default is `server/data/`.
 
 ## API List
 
@@ -86,6 +94,7 @@ GET /api/health
 
 ```http
 GET /api/stages
+GET /api/stages?q=logic&creator=Admin&tag=extreme
 GET /api/stages/:level
 ```
 
@@ -117,6 +126,7 @@ Authorization: Bearer <token>
 
 ```http
 GET /api/community/stages
+GET /api/community/stages?q=hard&creator=maker&tag=logic
 GET /api/me/stages
 POST /api/community/stages
 PUT /api/community/stages/:id
@@ -130,6 +140,9 @@ DELETE /api/community/stages/:id
   "title": "My Map",
   "difficulty": "Community",
   "moveLimit": 12,
+  "tags": ["logic", "hard"],
+  "creatorClearVerified": true,
+  "clearHash": "client-generated-clear-hash",
   "board": [
     "P..G",
     ".##.",
@@ -149,12 +162,15 @@ DELETE /api/community/stages/:id
 }
 ```
 
+The frontend requires the creator to test-play and clear the current map before upload. The API also rejects community map create/update requests unless `creatorClearVerified` is `true`.
+
 ### Custom Blocks
 
 Custom blocks use a small JSON rule format instead of arbitrary JavaScript so uploaded blocks are safe for other players.
 
 ```http
 GET /api/blocks
+GET /api/blocks?q=gate&creator=maker&tag=logic
 GET /api/me/blocks
 POST /api/blocks
 PUT /api/blocks/:id
@@ -170,6 +186,7 @@ POST /api/blocks/:id/download
   "tile": "C",
   "color": "#38bdf8",
   "effect": "oneway",
+  "tags": ["gate", "logic"],
   "moveCost": 1,
   "outDirection": "up",
   "requires": {
@@ -195,7 +212,7 @@ POST /api/blocks/:id/download
 Supported effects:
 
 ```text
-wall, goal, key, lock, slow, bounce, floor, force, oneway
+wall, goal, key, lock, slow, bounce, floor, force, oneway, gameover
 ```
 
 Supported directions:
@@ -211,7 +228,34 @@ hasKey
 direction
 movesUsedAtLeast / movesUsedAtMost
 movesRemainingAtLeast / movesRemainingAtMost
+elapsedSeconds with comparison operators >, >=, <, <=
 ```
+
+Time condition example:
+
+```json
+{
+  "requires": {
+    "elapsedSeconds": { "<=": 5 }
+  }
+}
+```
+
+Block transform commands:
+
+```json
+{
+  "change": [
+    {
+      "targetTile": "S",
+      "tile": "X",
+      "afterSeconds": 4
+    }
+  ]
+}
+```
+
+`spawn` and `change` mean the same thing. Without `afterSeconds`, the tile changes immediately. With `afterSeconds`, it changes after that many seconds.
 
 Custom block images are stored as small data URLs in the `image` field. The app accepts png, jpg, webp, and gif images up to the server limit.
 
@@ -273,6 +317,13 @@ Use `render.yaml` as a starting point, or create a Render Web Service manually:
 - Build command: `npm install`
 - Start command: `npm start`
 - Environment variables: `ADMIN_TOKEN`, `JWT_SECRET`, `CLIENT_ORIGIN`, `CLIENT_URL`
+- Optional data directory: `PUZZLE_TOWER_DATA_DIR=/var/data`
+
+Important persistence note:
+
+- Render Free web services do not provide persistent disks. Local SQLite data can disappear after redeploys, restarts, or spin-downs.
+- To preserve users, login records, maps, blocks, and rankings on Render, attach a Render Persistent Disk and set `PUZZLE_TOWER_DATA_DIR` to the disk mount path, for example `/var/data`.
+- If you must stay fully free, use a hosted database such as Supabase/Postgres instead of local SQLite.
 
 Backend API URL format:
 
@@ -284,6 +335,8 @@ https://puzzle-tower.onrender.com/api/health
 
 GitHub Pages can host the frontend only. Email login, ranking save, community map upload, custom block sharing, and admin APIs need the Express backend deployed separately.
 
-The local SQLite file is created under `server/data/`. On free server platforms, use persistent storage or a hosted database if long-term records must survive restarts.
+The local SQLite file is created under `server/data/` unless `PUZZLE_TOWER_DATA_DIR` is set.
+
+Nicknames are validated on the server. `admin`, case variants, admin-like one-character variants, unicode homoglyph attempts, invisible/control characters, combining zalgo characters, and UI-breaking names are rejected for normal users. The reserved display name `Admin` is created internally for official Admin-authored content.
 
 AdSense may render a blank area until the site and ad slot are approved by Google AdSense.

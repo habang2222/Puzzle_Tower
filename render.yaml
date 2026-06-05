@@ -13,7 +13,15 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: PUZZLE_TOWER_DATA_DIR
+        value: /var/data
       - key: CLIENT_ORIGIN
         value: https://habang2222.github.io
       - key: CLIENT_URL
         value: https://habang2222.github.io/Puzzle_Tower/
+    # Attach a Render Persistent Disk at /var/data to preserve users, maps, blocks, and records.
+    # Render Free web services do not provide persistent disks.
+    # disk:
+    #   name: puzzle-tower-data
+    #   mountPath: /var/data
+    #   sizeGB: 1

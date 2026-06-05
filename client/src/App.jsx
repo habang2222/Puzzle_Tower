@@ -32,7 +32,7 @@ import {
   Zap
 } from 'lucide-react';
 import { fallbackStages } from './data/stages.js';
-import { calculateScore, createInitialGame, movePlayer } from './game/engine.js';
+import { calculateScore, createInitialGame, movePlayer, tickGame } from './game/engine.js';
 import {
   createStage,
   deleteCommunityStage,
@@ -114,8 +114,11 @@ export default function App() {
   const [adminDraft, setAdminDraft] = useState('');
   const [adminMessage, setAdminMessage] = useState('');
   const [builder, setBuilder] = useState(() => createBuilderState());
+  const [builderVerifiedHash, setBuilderVerifiedHash] = useState('');
   const [selectedTile, setSelectedTile] = useState('#');
   const [builderMessage, setBuilderMessage] = useState('');
+  const [stageSearch, setStageSearch] = useState({ q: '', creator: '', tag: '' });
+  const [blockSearch, setBlockSearch] = useState({ q: '', creator: '', tag: '' });
   const [myStages, setMyStages] = useState([]);
   const [customBlocks, setCustomBlocks] = useState(() => loadLocalBlocks());
   const [publicBlocks, setPublicBlocks] = useState([]);
@@ -193,7 +196,11 @@ export default function App() {
     }
 
     const timer = window.setInterval(() => {
-      setElapsed((value) => value + 1);
+      setElapsed((value) => {
+        const nextElapsed = value + 1;
+        setGame((current) => tickGame(current, nextElapsed));
+        return nextElapsed;
+      });
     }, 1000);
 
     return () => window.clearInterval(timer);
@@ -222,6 +229,13 @@ export default function App() {
 
   useEffect(() => {
     if (game.status !== 'cleared' || recordSaved) {
+      return;
+    }
+
+    if (selectedStage.isDraft) {
+      setBuilderVerifiedHash(selectedStage.builderHash || '');
+      setBuilderMessage('테스트 클리어 완료. 이 상태 그대로 업로드할 수 있습니다.');
+      setRecordSaved(true);
       return;
     }
 
@@ -276,8 +290,8 @@ export default function App() {
   }, [selectedStage, stages, startStage]);
 
   const handleMove = useCallback((direction) => {
-    setGame((current) => movePlayer(current, direction));
-  }, []);
+    setGame((current) => movePlayer(current, direction, elapsed));
+  }, [elapsed]);
 
   useEffect(() => {
     if (view !== 'game') {
@@ -336,9 +350,9 @@ export default function App() {
     }
   };
 
-  const loadPublicBlocks = async () => {
+  const loadPublicBlocks = async (filters = blockSearch) => {
     try {
-      const rows = await fetchPublicBlocks();
+      const rows = await fetchPublicBlocks(filters);
       setPublicBlocks(rows.map(normalizeCustomBlock));
       setApiOnline(true);
     } catch (error) {
@@ -425,9 +439,20 @@ export default function App() {
       const normalized = normalizeCustomBlock(downloaded);
       mergeCustomBlocks([normalized]);
       setSelectedTile(normalized.tile);
-      setBlockMessage('블록을 내 제작 팔레트에 추가했습니다.');
+    setBlockMessage('블록을 내 제작 팔레트에 추가했습니다.');
     } catch (error) {
       setBlockMessage(error.message);
+    }
+  };
+
+  const loadFilteredStages = async () => {
+    try {
+      const loadedStages = await fetchStages(stageSearch);
+      const normalized = loadedStages.map(normalizeStage).sort(sortStages);
+      setStages(normalized);
+      setApiOnline(true);
+    } catch (error) {
+      setApiOnline(false);
     }
   };
 
@@ -499,7 +524,9 @@ export default function App() {
         title: parsed.title,
         difficulty: parsed.difficulty,
         moveLimit: Number(parsed.moveLimit),
-        board: parsed.board
+        board: parsed.board,
+        tags: parsed.tags || [],
+        customBlocks: parsed.customBlocks || []
       };
       const saved =
         parsed.id && stages.some((stage) => stage.id === parsed.id)
@@ -575,6 +602,7 @@ export default function App() {
       title: stage.title,
       difficulty: stage.difficulty,
       moveLimit: stage.moveLimit,
+      tags: (stage.tags || []).join(', '),
       rows: board.length,
       cols: board[0]?.length || 6,
       board
@@ -596,16 +624,22 @@ export default function App() {
       return;
     }
 
-    const payload = {
-      title: builder.title,
-      difficulty: builder.difficulty,
-      moveLimit: Number(builder.moveLimit),
-      board: boardToStrings(builder.board),
-      customBlocks: getUsedCustomBlocks(builder.board, customBlocks)
+    const payload = createBuilderPayload(builder, customBlocks);
+    const builderHash = createBuilderHash(payload);
+
+    if (builderVerifiedHash !== builderHash) {
+      setBuilderMessage('업로드 전에 현재 맵을 테스트 플레이로 1회 클리어해야 합니다.');
+      return;
+    }
+
+    const verifiedPayload = {
+      ...payload,
+      clearHash: builderHash,
+      creatorClearVerified: true
     };
 
     try {
-      const saved = builder.id ? await updateCommunityStage(builder.id, payload) : await publishCommunityStage(payload);
+      const saved = builder.id ? await updateCommunityStage(builder.id, verifiedPayload) : await publishCommunityStage(verifiedPayload);
       const normalized = normalizeStage(saved);
       const refreshed = await refreshStages();
       await loadMyStages();
@@ -616,6 +650,39 @@ export default function App() {
     } catch (error) {
       setBuilderMessage(error.message);
     }
+  };
+
+  const testBuilder = () => {
+    const validation = validateBuilder(builder);
+    if (!validation.ok) {
+      setBuilderMessage(validation.message);
+      return;
+    }
+
+    const payload = createBuilderPayload(builder, customBlocks);
+    const builderHash = createBuilderHash(payload);
+    const draftStage = {
+      id: `draft-${builderHash}`,
+      level: 0,
+      title: `${builder.title} 테스트`,
+      difficulty: builder.difficulty,
+      moveLimit: Number(builder.moveLimit),
+      board: payload.board,
+      customBlocks: payload.customBlocks,
+      tags: payload.tags,
+      creatorId: user?.id,
+      creatorNickname: user?.nickname,
+      isOfficial: false,
+      isDraft: true,
+      builderHash
+    };
+
+    setSelectedStage(draftStage);
+    setGame(createInitialGame(draftStage));
+    setElapsed(0);
+    setRecordSaved(false);
+    setBuilderMessage('테스트 플레이를 시작했습니다. 클리어해야 업로드할 수 있습니다.');
+    setView('game');
   };
 
   const removeMyStage = async (stageId) => {
@@ -821,6 +888,40 @@ export default function App() {
               </div>
               <StatusPill online={apiOnline} />
             </div>
+            <div className="search-panel">
+              <input
+                aria-label="맵 이름 검색"
+                onChange={(event) => setStageSearch((current) => ({ ...current, q: event.target.value }))}
+                placeholder="맵 이름/난이도 검색"
+                value={stageSearch.q}
+              />
+              <input
+                aria-label="제작자 검색"
+                onChange={(event) => setStageSearch((current) => ({ ...current, creator: event.target.value }))}
+                placeholder="제작자 검색"
+                value={stageSearch.creator}
+              />
+              <input
+                aria-label="태그 검색"
+                onChange={(event) => setStageSearch((current) => ({ ...current, tag: event.target.value }))}
+                placeholder="태그 검색"
+                value={stageSearch.tag}
+              />
+              <button onClick={loadFilteredStages} type="button">
+                <ListRestart size={17} />
+                <span>검색</span>
+              </button>
+              <button
+                onClick={() => {
+                  setStageSearch({ q: '', creator: '', tag: '' });
+                  refreshStages();
+                }}
+                type="button"
+              >
+                <Eraser size={17} />
+                <span>초기화</span>
+              </button>
+            </div>
             <div className="stage-grid">
               {stages.map((stage) => (
                 <article className={stage.isOfficial ? 'stage-card' : 'stage-card community'} key={stage.id}>
@@ -834,7 +935,8 @@ export default function App() {
                     <span>{stage.moveLimit} moves</span>
                     <span>{stage.board.length} x {stage.board[0]?.length || 0}</span>
                   </div>
-                  {!stage.isOfficial && <p className="stage-author">제작자: {stage.creatorNickname || 'player'}</p>}
+                  {stage.tags?.length > 0 && <TagList tags={stage.tags} />}
+                  {stage.creatorNickname && <p className="stage-author">제작자: {stage.creatorNickname}</p>}
                   <div className="stage-card-actions">
                     <button className="primary" onClick={() => startStage(stage)} type="button">
                       <Play size={16} />
@@ -890,6 +992,10 @@ export default function App() {
                       <input id="map-difficulty" maxLength={20} onChange={(event) => setBuilderField('difficulty', event.target.value)} value={builder.difficulty} />
                     </div>
                     <div>
+                      <label htmlFor="map-tags">태그</label>
+                      <input id="map-tags" maxLength={80} onChange={(event) => setBuilderField('tags', event.target.value)} placeholder="예: hard, logic" value={builder.tags} />
+                    </div>
+                    <div>
                       <label htmlFor="map-moves">이동 제한</label>
                       <input
                         id="map-moves"
@@ -939,6 +1045,10 @@ export default function App() {
                     ))}
                   </div>
                   <div className="hero-actions">
+                    <button onClick={testBuilder} type="button">
+                      <Play size={18} />
+                      <span>{builderVerifiedHash === createBuilderHash(createBuilderPayload(builder, customBlocks)) ? '클리어 확인됨' : '테스트 플레이'}</span>
+                    </button>
                     <button className="primary" onClick={publishBuilder} type="button">
                       <UploadCloud size={18} />
                       <span>{builder.id ? '수정 업로드' : '업로드'}</span>
@@ -1046,6 +1156,29 @@ export default function App() {
                   </div>
                   <div className="block-list">
                     <h4>공개 블록</h4>
+                    <div className="mini-search-panel">
+                      <input
+                        aria-label="블록 검색"
+                        onChange={(event) => setBlockSearch((current) => ({ ...current, q: event.target.value }))}
+                        placeholder="블록 이름/효과"
+                        value={blockSearch.q}
+                      />
+                      <input
+                        aria-label="블록 제작자 검색"
+                        onChange={(event) => setBlockSearch((current) => ({ ...current, creator: event.target.value }))}
+                        placeholder="제작자"
+                        value={blockSearch.creator}
+                      />
+                      <input
+                        aria-label="블록 태그 검색"
+                        onChange={(event) => setBlockSearch((current) => ({ ...current, tag: event.target.value }))}
+                        placeholder="태그"
+                        value={blockSearch.tag}
+                      />
+                      <button onClick={() => loadPublicBlocks(blockSearch)} type="button">
+                        <ListRestart size={16} />
+                      </button>
+                    </div>
                     {publicBlocks.length === 0 ? (
                       <p className="stage-author">서버에 공개된 블록이 아직 없습니다.</p>
                     ) : (
@@ -1071,7 +1204,7 @@ export default function App() {
               <div>
                 <p className="eyebrow">{selectedStage.isOfficial ? `LEVEL ${selectedStage.level}` : 'COMMUNITY MAP'}</p>
                 <h2>{selectedStage.title}</h2>
-                {!selectedStage.isOfficial && <p className="stage-author">제작자: {selectedStage.creatorNickname || 'player'}</p>}
+                {selectedStage.creatorNickname && <p className="stage-author">제작자: {selectedStage.creatorNickname}</p>}
               </div>
               <div className="stat-list">
                 <Stat label="남은 이동" value={movesRemaining} />
@@ -1338,6 +1471,7 @@ function BlockItem({ block, onDownload, onEdit, onRemove }) {
           {block.effect}
           {block.outDirection ? ` ${block.outDirection}` : ''} · {block.moveCost} cost · {block.downloads || 0} downloads
         </span>
+        {block.tags?.length > 0 && <TagList tags={block.tags} />}
       </div>
       <div className="block-actions">
         <button aria-label={`${block.name} 다운로드`} onClick={() => onDownload(block)} type="button">
@@ -1352,6 +1486,16 @@ function BlockItem({ block, onDownload, onEdit, onRemove }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function TagList({ tags }) {
+  return (
+    <div className="tag-list">
+      {tags.slice(0, 5).map((tag) => (
+        <span key={tag}>#{tag}</span>
+      ))}
     </div>
   );
 }
@@ -1464,6 +1608,7 @@ right = 오른쪽`}</pre>
               <div><strong>movesUsedAtMost</strong><span>이미 사용한 이동 횟수가 이 숫자 이하여야 합니다.</span></div>
               <div><strong>movesRemainingAtLeast</strong><span>남은 이동 횟수가 이 숫자 이상이어야 합니다.</span></div>
               <div><strong>movesRemainingAtMost</strong><span>남은 이동 횟수가 이 숫자 이하여야 합니다.</span></div>
+              <div><strong>elapsedSeconds</strong><span>스테이지 시작 후 지난 시간을 비교합니다. 예: {`{ "<=": 5 }`}</span></div>
             </div>
           </section>
 
@@ -1505,7 +1650,7 @@ right = 오른쪽`}</pre>
 
           <section>
             <h3>spawn 명령</h3>
-            <p>spawn은 블록을 밟았을 때 맵의 다른 칸에 새 타일을 만들거나 바꿉니다.</p>
+            <p>spawn 또는 change는 블록을 밟았을 때 맵의 다른 칸에 새 타일을 만들거나 바꿉니다.</p>
             <div className="guide-table compact">
               <div><strong>tile</strong><span>새로 만들 타일입니다. 예: "X"</span></div>
               <div><strong>row</strong><span>몇 번째 줄인지 씁니다. 첫 번째 줄은 1입니다.</span></div>
@@ -1513,7 +1658,24 @@ right = 오른쪽`}</pre>
               <div><strong>targetTile</strong><span>맵에 있는 특정 타일을 전부 바꿉니다. 예: "S"를 전부 "X"로 바꾸기</span></div>
               <div><strong>relative</strong><span>밟은 위치 기준으로 만듭니다. current, up, down, left, right</span></div>
               <div><strong>distance</strong><span>relative를 쓸 때 몇 칸 떨어진 곳인지 씁니다. 생략하면 1입니다.</span></div>
+              <div><strong>afterSeconds</strong><span>몇 초 뒤에 바꿀지 씁니다. 생략하거나 0이면 즉시 바뀝니다.</span></div>
             </div>
+          </section>
+
+          <section>
+            <h3>시간 조건과 부등호</h3>
+            <p>elapsedSeconds는 시작 후 지난 시간입니다. 부등호는 큰따옴표 안에 씁니다.</p>
+            <pre>{`{
+  "name": "5초 문",
+  "tile": "Y",
+  "color": "#22c55e",
+  "effect": "floor",
+  "moveCost": 1,
+  "requires": {
+    "elapsedSeconds": { "<=": 5 }
+  },
+  "failMessage": "5초 안에 도착해야 열립니다."
+}`}</pre>
           </section>
 
           <section>
@@ -1637,6 +1799,26 @@ right = 오른쪽`}</pre>
           </section>
 
           <section>
+            <h3>복붙 예시: 몇 초 뒤 블록 바꾸기</h3>
+            <p>H를 밟으면 4초 뒤 S 표시칸이 전부 X 함정으로 바뀝니다.</p>
+            <pre>{`{
+  "name": "지연 함정 발판",
+  "tile": "H",
+  "color": "#38bdf8",
+  "effect": "floor",
+  "moveCost": 1,
+  "message": "4초 뒤 함정이 켜집니다.",
+  "change": [
+    {
+      "targetTile": "S",
+      "tile": "X",
+      "afterSeconds": 4
+    }
+  ]
+}`}</pre>
+          </section>
+
+          <section>
             <h3>복붙 예시: 열쇠 문</h3>
             <p>열쇠가 있어야 지나갈 수 있습니다. 지나가면 문이 사라집니다.</p>
             <pre>{`{
@@ -1738,10 +1920,12 @@ function normalizeStage(stage) {
     moveLimit: stage.moveLimit ?? stage.move_limit,
     board: typeof boardData === 'string' ? JSON.parse(boardData).board || JSON.parse(boardData) : boardData,
     customBlocks: Array.isArray(stage.customBlocks) ? stage.customBlocks.map(normalizeCustomBlock) : [],
+    tags: parseTags(stage.tags || []),
     creatorId: stage.creatorId ?? stage.creator_id,
     creatorNickname: stage.creatorNickname ?? stage.creator_nickname,
     isOfficial,
     isPublic: stage.isPublic ?? (stage.is_public === undefined ? true : stage.is_public !== 0),
+    creatorClearVerified: stage.creatorClearVerified ?? (stage.creator_clear_verified === undefined ? true : stage.creator_clear_verified !== 0),
     playCount: stage.playCount ?? stage.play_count ?? 0
   };
 }
@@ -1752,7 +1936,8 @@ function normalizeCustomBlock(block) {
   const outDirection = normalizeDirectionValue(code.outDirection || code.exitDirection || block.outDirection || block.exitDirection || '');
   const requires = normalizeBlockCondition(code.requires || code.require || block.requires || block.require || null);
   const rules = normalizeBlockRules(code.if || code.rules || block.if || block.rules || []);
-  const spawn = normalizeBlockSpawns(code.spawn || code.spawns || block.spawn || block.spawns || []);
+  const spawn = normalizeBlockSpawns(code.spawn || code.spawns || code.change || code.changes || block.spawn || block.spawns || block.change || block.changes || []);
+  const tags = parseTags(code.tags || block.tags || []);
   return {
     id: block.id || null,
     userId: block.userId ?? block.user_id,
@@ -1761,6 +1946,7 @@ function normalizeCustomBlock(block) {
     tile: String(code.tile || block.tile || 'C').slice(0, 1).toUpperCase(),
     color: String(code.color || block.color || '#a78bfa'),
     effect: String(code.effect || block.effect || 'slow').toLowerCase(),
+    tags,
     moveCost: Number(code.moveCost ?? block.moveCost ?? block.move_cost ?? 2),
     message: String(code.message || block.message || ''),
     failMessage: String(code.failMessage || block.failMessage || ''),
@@ -1780,6 +1966,7 @@ function normalizeCustomBlock(block) {
       tile: String(code.tile || block.tile || 'C').slice(0, 1).toUpperCase(),
       color: String(code.color || block.color || '#a78bfa'),
       effect: String(code.effect || block.effect || 'slow').toLowerCase(),
+      tags,
       moveCost: Number(code.moveCost ?? block.moveCost ?? block.move_cost ?? 2),
       message: String(code.message || block.message || ''),
       failMessage: String(code.failMessage || block.failMessage || ''),
@@ -1834,7 +2021,7 @@ function parseBlockDraft(draft) {
     return conditionValidation;
   }
 
-  const spawnValidation = validateBlockSpawns(parsed.spawn || parsed.spawns || []);
+  const spawnValidation = validateBlockSpawns(parsed.spawn || parsed.spawns || parsed.change || parsed.changes || []);
   if (!spawnValidation.ok) {
     return spawnValidation;
   }
@@ -1899,7 +2086,9 @@ function stageToDraft(stage) {
     title: stage.title,
     difficulty: stage.difficulty,
     moveLimit: stage.moveLimit,
-    board: stage.board
+    tags: stage.tags || [],
+    board: stage.board,
+    customBlocks: stage.customBlocks || []
   };
 }
 
@@ -1909,6 +2098,7 @@ function createBuilderState() {
     title: '내 퍼즐 맵',
     difficulty: '커뮤니티',
     moveLimit: 12,
+    tags: 'community',
     rows: 6,
     cols: 6,
     board: [
@@ -1961,6 +2151,29 @@ function validateBuilder(builder) {
   return { ok: true };
 }
 
+function createBuilderPayload(builder, customBlocks) {
+  return {
+    title: builder.title,
+    difficulty: builder.difficulty,
+    moveLimit: Number(builder.moveLimit),
+    tags: parseTags(builder.tags),
+    board: boardToStrings(builder.board),
+    customBlocks: getUsedCustomBlocks(builder.board, customBlocks)
+  };
+}
+
+function createBuilderHash(payload) {
+  return btoa(
+    encodeURIComponent(
+      JSON.stringify({
+        moveLimit: payload.moveLimit,
+        board: payload.board,
+        customBlocks: payload.customBlocks.map((block) => block.code || block)
+      })
+    )
+  ).slice(0, 120);
+}
+
 function normalizeBlockRules(rules) {
   if (!Array.isArray(rules)) {
     return [];
@@ -1970,7 +2183,7 @@ function normalizeBlockRules(rules) {
     .filter((rule) => rule && typeof rule === 'object')
     .slice(0, 8)
     .map((rule) => {
-      const spawn = normalizeBlockSpawns(rule.spawn || rule.spawns || []);
+      const spawn = normalizeBlockSpawns(rule.spawn || rule.spawns || rule.change || rule.changes || []);
       return {
         when: normalizeBlockCondition(rule.when || rule.condition || {}),
         ...(rule.effect === undefined ? {} : { effect: String(rule.effect).toLowerCase() }),
@@ -2000,7 +2213,8 @@ function normalizeBlockSpawns(spawn) {
       const relative = relativeValue === 'current' ? 'current' : normalizeDirectionValue(relativeValue);
       const row = Number(item.row);
       const col = Number(item.col);
-      const distance = Number(item.distance);
+    const distance = Number(item.distance);
+    const afterSeconds = Number(item.afterSeconds ?? item.after);
 
       if (!tile) {
         return null;
@@ -2011,7 +2225,8 @@ function normalizeBlockSpawns(spawn) {
         ...(targetTile ? { targetTile } : {}),
         ...(Number.isFinite(row) && Number.isFinite(col) ? { row: Math.round(row), col: Math.round(col) } : {}),
         ...(relative ? { relative } : {}),
-        ...(Number.isFinite(distance) ? { distance: Math.max(1, Math.min(Math.round(distance), 9)) } : {})
+        ...(Number.isFinite(distance) ? { distance: Math.max(1, Math.min(Math.round(distance), 9)) } : {}),
+        ...(Number.isFinite(afterSeconds) ? { afterSeconds: Math.max(0, Math.min(Math.round(afterSeconds), 99)) } : {})
       };
     })
     .filter(Boolean);
@@ -2039,6 +2254,14 @@ function normalizeBlockCondition(condition) {
       normalized[key] = Math.max(0, Math.min(Math.round(Number(condition[key])), 99));
     }
   });
+  ['elapsedSeconds', 'time', 'seconds'].forEach((key) => {
+    if (condition[key] !== undefined) {
+      const comparison = normalizeComparison(condition[key]);
+      if (comparison) {
+        normalized.elapsedSeconds = comparison;
+      }
+    }
+  });
 
   return Object.keys(normalized).length ? normalized : null;
 }
@@ -2061,8 +2284,40 @@ function validateBlockCondition(condition) {
   if (numberKeys.some((key) => condition[key] !== undefined && !Number.isFinite(Number(condition[key])))) {
     return { ok: false, message: '이동 횟수 조건은 숫자여야 합니다.' };
   }
+  for (const key of ['elapsedSeconds', 'time', 'seconds']) {
+    if (condition[key] !== undefined && !isValidComparison(condition[key])) {
+      return { ok: false, message: '시간 조건은 숫자 또는 { \">\": 3, \"<=\": 10 } 같은 비교 객체여야 합니다.' };
+    }
+  }
 
   return { ok: true };
+}
+
+function normalizeComparison(value) {
+  if (Number.isFinite(Number(value))) {
+    return { '<=': Math.max(0, Math.min(Math.round(Number(value)), 999)) };
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const normalized = {};
+  ['>', '>=', '<', '<='].forEach((operator) => {
+    if (value[operator] !== undefined && Number.isFinite(Number(value[operator]))) {
+      normalized[operator] = Math.max(0, Math.min(Math.round(Number(value[operator])), 999));
+    }
+  });
+  return Object.keys(normalized).length ? normalized : null;
+}
+
+function isValidComparison(value) {
+  if (Number.isFinite(Number(value))) {
+    return true;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  return ['>', '>=', '<', '<='].some((operator) => value[operator] !== undefined && Number.isFinite(Number(value[operator])));
 }
 
 function validateBlockRules(rules) {
@@ -2091,7 +2346,7 @@ function validateBlockRules(rules) {
     if ((rule.outDirection || rule.exitDirection) && !outDirection) {
       return { ok: false, message: 'if 규칙의 outDirection은 up, down, left, right 중 하나여야 합니다.' };
     }
-    const spawnValidation = validateBlockSpawns(rule.spawn || rule.spawns || []);
+    const spawnValidation = validateBlockSpawns(rule.spawn || rule.spawns || rule.change || rule.changes || []);
     if (!spawnValidation.ok) {
       return spawnValidation;
     }
@@ -2130,6 +2385,9 @@ function validateBlockSpawns(spawn) {
       if (relative !== 'current' && !normalizeDirectionValue(relative)) {
         return { ok: false, message: 'spawn의 relative는 current, up, down, left, right 중 하나여야 합니다.' };
       }
+    }
+    if ((item.afterSeconds !== undefined || item.after !== undefined) && !Number.isFinite(Number(item.afterSeconds ?? item.after))) {
+      return { ok: false, message: 'spawn의 afterSeconds는 0~99 사이 숫자여야 합니다.' };
     }
 
     if (!hasTargetTile && !hasPosition && !hasRelative) {
@@ -2242,4 +2500,23 @@ function safeJsonParse(value, fallback) {
   } catch (error) {
     return fallback;
   }
+}
+
+function parseTags(value) {
+  const source = Array.isArray(value) ? value : String(value || '').split(',');
+  const tags = [];
+
+  source.forEach((item) => {
+    const tag = String(item || '')
+      .normalize('NFKC')
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}_-]/gu, '')
+      .slice(0, 18);
+    if (tag && !tags.includes(tag)) {
+      tags.push(tag);
+    }
+  });
+
+  return tags.slice(0, 5);
 }

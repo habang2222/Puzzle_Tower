@@ -23,9 +23,9 @@ export async function fetchHealth() {
   return request('/api/health');
 }
 
-export async function fetchStages() {
+export async function fetchStages(filters = {}) {
   try {
-    return await request('/api/stages');
+    return await request(withQuery('/api/stages', filters));
   } catch (error) {
     return fallbackStages;
   }
@@ -72,8 +72,8 @@ export async function createStage(stage, token) {
   return adminRequest('/api/admin/stages', 'POST', stage, token);
 }
 
-export async function fetchCommunityStages() {
-  return request('/api/community/stages');
+export async function fetchCommunityStages(filters = {}) {
+  return request(withQuery('/api/community/stages', filters));
 }
 
 export async function fetchMyStages() {
@@ -105,8 +105,8 @@ export async function deleteCommunityStage(stageId) {
   });
 }
 
-export async function fetchPublicBlocks() {
-  return request('/api/blocks');
+export async function fetchPublicBlocks(filters = {}) {
+  return request(withQuery('/api/blocks', filters));
 }
 
 export async function fetchMyBlocks() {
@@ -165,6 +165,18 @@ function adminRequest(path, method, body, token) {
     },
     body: JSON.stringify(body)
   });
+}
+
+function withQuery(path, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters || {}).forEach(([key, value]) => {
+    const trimmed = String(value || '').trim();
+    if (trimmed) {
+      params.set(key, trimmed);
+    }
+  });
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 async function request(path, options = {}) {

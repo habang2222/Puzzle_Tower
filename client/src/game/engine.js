@@ -46,44 +46,49 @@ export function createInitialGame(stage) {
     movesUsed: 0,
     status: 'playing',
     hasKey: false,
+    elapsedSeconds: 0,
+    pendingSpawns: [],
     message: '목표 지점까지 이동하세요.'
   };
 }
 
-export function movePlayer(game, directionName) {
-  if (game.status !== 'playing') {
-    return game;
+export function movePlayer(game, directionName, elapsedSeconds = game.elapsedSeconds || 0) {
+  const currentGame = tickGame({ ...game, elapsedSeconds }, elapsedSeconds);
+
+  if (currentGame.status !== 'playing') {
+    return currentGame;
   }
 
   const direction = directions[directionName];
   if (!direction) {
-    return game;
+    return currentGame;
   }
 
   const next = {
-    row: game.player.row + direction.row,
-    col: game.player.col + direction.col
+    row: currentGame.player.row + direction.row,
+    col: currentGame.player.col + direction.col
   };
 
-  const nextTile = getTile(game.tiles, next);
-  const customBlock = getCustomBlock(game.customBlocks, nextTile);
-  const customAction = customBlock ? resolveCustomBlockAction(customBlock, game, directionName) : null;
+  const nextTile = getTile(currentGame.tiles, next);
+  const customBlock = getCustomBlock(currentGame.customBlocks, nextTile);
+  const customAction = customBlock ? resolveCustomBlockAction(customBlock, currentGame, directionName) : null;
 
   if (!nextTile || nextTile === '#' || customAction?.effect === 'wall') {
-    return { ...game, message: '벽은 지나갈 수 없습니다.' };
+    return { ...currentGame, message: '벽은 지나갈 수 없습니다.' };
   }
 
   if (customAction?.blocked) {
-    return { ...game, message: customAction.failMessage || '조건을 만족해야 지나갈 수 있습니다.' };
+    return { ...currentGame, message: customAction.failMessage || '조건을 만족해야 지나갈 수 있습니다.' };
   }
 
-  if ((nextTile === 'L' || customAction?.effect === 'lock') && !game.hasKey) {
-    return { ...game, message: '열쇠가 있어야 잠금 타일을 지나갈 수 있습니다.' };
+  if ((nextTile === 'L' || customAction?.effect === 'lock') && !currentGame.hasKey) {
+    return { ...currentGame, message: '열쇠가 있어야 잠금 타일을 지나갈 수 있습니다.' };
   }
 
   let player = next;
-  let hasKey = game.hasKey || nextTile === 'K' || customAction?.effect === 'key' || customAction?.giveKey === true;
-  let tiles = game.tiles.map((row) => [...row]);
+  let hasKey = currentGame.hasKey || nextTile === 'K' || customAction?.effect === 'key' || customAction?.giveKey === true;
+  let tiles = currentGame.tiles.map((row) => [...row]);
+  let pendingSpawns = currentGame.pendingSpawns || [];
   let message = customAction?.message || (nextTile === 'K' ? '열쇠를 획득했습니다.' : '좋습니다. 계속 이동하세요.');
 
   if (customAction?.takeKey) {
@@ -100,12 +105,12 @@ export function movePlayer(game, directionName) {
   }
 
   if (customAction?.effect === 'bounce') {
-    player = game.player;
+    player = currentGame.player;
     message = customAction.message || '튕겨 나왔습니다.';
   }
 
-  if (isTeleport(nextTile, game.customBlocks)) {
-    const pair = game.teleports[nextTile] || [];
+  if (isTeleport(nextTile, currentGame.customBlocks)) {
+    const pair = currentGame.teleports[nextTile] || [];
     const exit = pair.find((point) => point.row !== next.row || point.col !== next.col);
     if (exit) {
       player = exit;
@@ -114,30 +119,33 @@ export function movePlayer(game, directionName) {
   }
 
   if (customAction?.spawn?.length) {
-    tiles = applySpawnActions(tiles, customAction.spawn, player);
+    const spawnResult = applySpawnBundle(tiles, customAction.spawn, player, elapsedSeconds);
+    tiles = spawnResult.tiles;
+    pendingSpawns = [...pendingSpawns, ...spawnResult.pendingSpawns];
   }
 
   let forcedStatus = null;
   if (customAction && customAction.effect !== 'bounce' && customAction.effect !== 'gameover') {
-    const forcedResult = applyForcedExit({ ...game, tiles, player, hasKey }, customAction);
+    const forcedResult = applyForcedExit({ ...currentGame, tiles, player, hasKey, pendingSpawns }, customAction, elapsedSeconds);
     if (forcedResult) {
       player = forcedResult.player;
       hasKey = forcedResult.hasKey;
       tiles = forcedResult.tiles;
+      pendingSpawns = forcedResult.pendingSpawns || pendingSpawns;
       message = forcedResult.message;
       forcedStatus = forcedResult.status || null;
     }
   }
 
   const moveCost = Math.max(Number(customAction?.moveCost || 1), 1);
-  const movesUsed = game.movesUsed + moveCost;
+  const movesUsed = currentGame.movesUsed + moveCost;
   const status =
     forcedStatus ||
     (customAction?.effect === 'gameover'
       ? 'failed'
-      : customAction?.effect === 'goal' || (player.row === game.goal.row && player.col === game.goal.col)
+      : customAction?.effect === 'goal' || (player.row === currentGame.goal.row && player.col === currentGame.goal.col)
       ? 'cleared'
-      : movesUsed >= game.stage.moveLimit
+      : movesUsed >= currentGame.stage.moveLimit
         ? 'failed'
         : 'playing');
 
@@ -151,13 +159,46 @@ export function movePlayer(game, directionName) {
   }
 
   return {
-    ...game,
+    ...currentGame,
     tiles,
     player,
     movesUsed,
     hasKey,
+    elapsedSeconds,
+    pendingSpawns,
     status,
     message
+  };
+}
+
+export function tickGame(game, elapsedSeconds = game.elapsedSeconds || 0) {
+  if (!game.pendingSpawns?.length) {
+    return { ...game, elapsedSeconds };
+  }
+
+  if (game.status !== 'playing') {
+    return { ...game, elapsedSeconds };
+  }
+
+  let tiles = game.tiles;
+  const remaining = [];
+  let applied = 0;
+
+  game.pendingSpawns.forEach((scheduled) => {
+    if (scheduled.runAtSeconds <= elapsedSeconds) {
+      tiles = applySpawnActions(tiles, [scheduled.spawn], game.player);
+      applied += 1;
+    } else {
+      remaining.push(scheduled);
+    }
+  });
+
+  return {
+    ...game,
+    elapsedSeconds,
+    tiles,
+    pendingSpawns: remaining,
+    message: applied ? '시간 조건으로 블록이 변했습니다.' : game.message
   };
 }
 
@@ -218,7 +259,7 @@ function normalizeBlockAction(block) {
     consumeOnUse: block?.consumeOnUse === true,
     giveKey: block?.giveKey === true,
     takeKey: block?.takeKey === true,
-    spawn: normalizeSpawnItems(block?.spawn || block?.spawns || []),
+    spawn: normalizeSpawnItems(block?.spawn || block?.spawns || block?.change || block?.changes || []),
     rules: normalizeRules(block?.if || block?.rules || [])
   };
 }
@@ -240,7 +281,12 @@ function normalizeCondition(condition) {
   if (!condition || typeof condition !== 'object') {
     return null;
   }
-  return condition;
+  return {
+    ...condition,
+    ...(condition.elapsedSeconds !== undefined || condition.time !== undefined || condition.seconds !== undefined
+      ? { elapsedSeconds: condition.elapsedSeconds ?? condition.time ?? condition.seconds }
+      : {})
+  };
 }
 
 function matchesCondition(condition, context) {
@@ -271,6 +317,9 @@ function matchesCondition(condition, context) {
   if (condition.movesRemainingAtMost !== undefined && context.movesRemaining > Number(condition.movesRemainingAtMost)) {
     return false;
   }
+  if (condition.elapsedSeconds !== undefined && !matchesComparison(context.elapsedSeconds, condition.elapsedSeconds)) {
+    return false;
+  }
 
   return true;
 }
@@ -280,8 +329,64 @@ function createConditionContext(game, directionName) {
     direction: normalizeDirection(directionName),
     hasKey: Boolean(game.hasKey),
     movesUsed: game.movesUsed,
-    movesRemaining: Math.max(game.stage.moveLimit - game.movesUsed, 0)
+    movesRemaining: Math.max(game.stage.moveLimit - game.movesUsed, 0),
+    elapsedSeconds: Number(game.elapsedSeconds || 0)
   };
+}
+
+function matchesComparison(value, comparison) {
+  const number = Number(value || 0);
+  if (Number.isFinite(Number(comparison))) {
+    return number <= Number(comparison);
+  }
+  if (!comparison || typeof comparison !== 'object') {
+    return true;
+  }
+
+  if (comparison['>'] !== undefined && !(number > Number(comparison['>']))) {
+    return false;
+  }
+  if (comparison['>='] !== undefined && !(number >= Number(comparison['>=']))) {
+    return false;
+  }
+  if (comparison['<'] !== undefined && !(number < Number(comparison['<']))) {
+    return false;
+  }
+  if (comparison['<='] !== undefined && !(number <= Number(comparison['<=']))) {
+    return false;
+  }
+  return true;
+}
+
+function applySpawnBundle(tiles, spawns, origin, elapsedSeconds) {
+  const normalized = normalizeSpawnItems(spawns);
+  const immediate = normalized.filter((spawn) => !spawn.afterSeconds);
+  const delayed = normalized.filter((spawn) => spawn.afterSeconds > 0);
+  const nextTiles = immediate.length ? applySpawnActions(tiles, immediate, origin) : tiles;
+
+  return {
+    tiles: nextTiles,
+    pendingSpawns: delayed.map((spawn) => ({
+      runAtSeconds: elapsedSeconds + spawn.afterSeconds,
+      spawn: prepareScheduledSpawn(spawn, origin)
+    }))
+  };
+}
+
+function prepareScheduledSpawn(spawn, origin) {
+  if (spawn.targetTile || Number.isFinite(spawn.row) || Number.isFinite(spawn.col)) {
+    return spawn;
+  }
+
+  const point = resolveSpawnPoint(spawn, origin);
+  return point
+    ? {
+        ...spawn,
+        row: point.row + 1,
+        col: point.col + 1,
+        relative: ''
+      }
+    : spawn;
 }
 
 function applySpawnActions(tiles, spawns, origin) {
@@ -332,7 +437,7 @@ function resolveSpawnPoint(spawn, origin) {
   };
 }
 
-function applyForcedExit(game, action) {
+function applyForcedExit(game, action, elapsedSeconds) {
   const directionName = normalizeDirection(action.outDirection || (action.effect === 'force' ? action.direction : ''));
   if (!directionName) {
     return null;
@@ -368,6 +473,7 @@ function applyForcedExit(game, action) {
   const tiles = game.tiles.map((row) => [...row]);
   let player = next;
   let hasKey = game.hasKey || tile === 'K' || blockAction?.effect === 'key' || blockAction?.giveKey === true;
+  let pendingSpawns = game.pendingSpawns || [];
 
   if (tile === 'K' || blockAction?.effect === 'key') {
     tiles[next.row][next.col] = '.';
@@ -377,9 +483,11 @@ function applyForcedExit(game, action) {
   }
 
   if (blockAction?.spawn?.length) {
-    applySpawnActions(tiles, blockAction.spawn, player).forEach((row, rowIndex) => {
+    const spawnResult = applySpawnBundle(tiles, blockAction.spawn, player, elapsedSeconds);
+    spawnResult.tiles.forEach((row, rowIndex) => {
       tiles[rowIndex] = row;
     });
+    pendingSpawns = [...pendingSpawns, ...spawnResult.pendingSpawns];
   }
 
   if (blockAction?.effect === 'gameover') {
@@ -387,6 +495,7 @@ function applyForcedExit(game, action) {
       player,
       hasKey,
       tiles,
+      pendingSpawns,
       status: 'failed',
       message: blockAction.message || '위험 블록을 밟았습니다. 게임오버!'
     };
@@ -404,6 +513,7 @@ function applyForcedExit(game, action) {
     player,
     hasKey,
     tiles,
+    pendingSpawns,
     message: action.message || `${directionLabels[directionName]} 방향으로 이동했습니다.`
   };
 }
@@ -426,6 +536,7 @@ function normalizeSpawnItems(spawn) {
       const row = Number(item.row);
       const col = Number(item.col);
       const distance = Math.max(Math.min(Number(item.distance || 1), 9), 1);
+      const afterSeconds = Math.max(Math.min(Number(item.afterSeconds ?? item.after ?? 0), 99), 0);
 
       if (!tile) {
         return null;
@@ -436,7 +547,8 @@ function normalizeSpawnItems(spawn) {
         ...(targetTile ? { targetTile } : {}),
         ...(Number.isFinite(row) && Number.isFinite(col) ? { row: Math.round(row), col: Math.round(col) } : {}),
         ...(relative ? { relative } : {}),
-        distance
+        distance,
+        afterSeconds
       };
     })
     .filter(Boolean);
