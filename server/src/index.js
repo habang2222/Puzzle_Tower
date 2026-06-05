@@ -48,13 +48,24 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const id = insert(
-    `
-    INSERT INTO users (nickname, nickname_key, email, password_hash, provider)
-    VALUES (?, ?, ?, ?, 'local')
-    `,
-    [nicknameValidation.nickname, nicknameValidation.key, email, passwordHash]
-  );
+  let id;
+  try {
+    id = insert(
+      `
+      INSERT INTO users (nickname, nickname_key, email, password_hash, provider)
+      VALUES (?, ?, ?, ?, 'local')
+      `,
+      [nicknameValidation.nickname, nicknameValidation.key, email, passwordHash]
+    );
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      res.status(409).json({ message: '이미 사용 중인 이메일 또는 닉네임입니다.' });
+      return;
+    }
+    console.error(error);
+    res.status(500).json({ message: '회원가입 중 오류가 발생했습니다.' });
+    return;
+  }
 
   const user = getUserById(id);
   res.status(201).json({ token: createAuthToken(user), user: publicUser(user) });
@@ -649,11 +660,25 @@ function findOrCreateUser(nicknameValidation) {
   if (existing) {
     return existing.id;
   }
-  return insert('INSERT INTO users (nickname, nickname_key, provider) VALUES (?, ?, ?)', [
-    nicknameValidation.nickname,
-    nicknameValidation.key,
-    'guest'
-  ]);
+  try {
+    return insert('INSERT INTO users (nickname, nickname_key, provider) VALUES (?, ?, ?)', [
+      nicknameValidation.nickname,
+      nicknameValidation.key,
+      'guest'
+    ]);
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      const createdByParallelRequest = get('SELECT id FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
+      if (createdByParallelRequest) {
+        return createdByParallelRequest.id;
+      }
+    }
+    throw error;
+  }
+}
+
+function isUniqueConstraintError(error) {
+  return /unique|constraint/i.test(String(error?.message || error));
 }
 
 function getUserById(id) {
