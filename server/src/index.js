@@ -8,7 +8,8 @@ import { createNicknameKey, parseTags, sanitizeDisplayText, validateNicknameInpu
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
-const adminToken = process.env.ADMIN_TOKEN || 'admin123';
+const configuredAdminToken = String(process.env.ADMIN_TOKEN || '').trim();
+const adminToken = configuredAdminToken || 'admin123';
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-me';
 
 app.use(cors({ origin: true }));
@@ -603,8 +604,12 @@ initDatabase().then(async () => {
 });
 
 function requireAdmin(req, res, next) {
-  if (req.header('x-admin-token') !== adminToken) {
-    res.status(401).json({ message: '관리자 토큰이 올바르지 않습니다.' });
+  const providedToken = String(req.header('x-admin-token') || '').trim();
+  if (providedToken !== adminToken) {
+    const tokenHint = configuredAdminToken
+      ? 'Render Environment에 설정한 ADMIN_TOKEN 값을 입력하세요.'
+      : '현재 서버는 기본 관리자 토큰 admin123을 사용합니다.';
+    res.status(401).json({ message: `관리자 토큰이 올바르지 않습니다. ${tokenHint}` });
     return;
   }
   next();
@@ -739,11 +744,11 @@ async function setAdminLogin(adminEmail, adminPassword) {
   const emailOwner = get('SELECT * FROM users WHERE email = ?', [adminEmail]);
 
   if (emailOwner && emailOwner.id !== admin.id) {
-    const fallbackNickname = `player${admin.id}`;
+    const fallback = findAvailableFallbackNickname(admin.id);
     run('UPDATE stages SET creator_id = ? WHERE creator_id = ?', [emailOwner.id, admin.id]);
     run('UPDATE users SET nickname = ?, nickname_key = ?, email = NULL, provider = ? WHERE id = ?', [
-      fallbackNickname,
-      createNicknameKey(fallbackNickname),
+      fallback.nickname,
+      fallback.key,
       'guest',
       admin.id
     ]);
@@ -764,6 +769,19 @@ async function setAdminLogin(adminEmail, adminPassword) {
     admin.id
   ]);
   return getUserById(admin.id);
+}
+
+function findAvailableFallbackNickname(userId) {
+  for (let index = 0; index < 1000; index += 1) {
+    const nickname = index === 0 ? `player${userId}` : `player${userId}x${index}`;
+    const key = createNicknameKey(nickname);
+    const taken = get('SELECT id FROM users WHERE nickname_key = ? AND id != ?', [key, userId]);
+    if (!taken) {
+      return { nickname, key };
+    }
+  }
+
+  throw new Error('Admin 계정 전환에 사용할 임시 닉네임을 만들 수 없습니다.');
 }
 
 function createSearchFilters(query, entityAlias, userAlias) {

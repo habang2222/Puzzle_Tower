@@ -557,10 +557,22 @@ export default function App() {
   };
 
   const saveAdminLogin = async () => {
+    const token = adminToken.trim();
+    const email = adminLoginForm.email.trim();
+    if (!token) {
+      setAdminMessage('관리자 토큰을 입력하세요. Render Environment의 ADMIN_TOKEN 값이며, 비밀번호가 아닙니다. 설정하지 않았다면 admin123입니다.');
+      return;
+    }
+    if (!email || adminLoginForm.password.length < 6) {
+      setAdminMessage('Admin 로그인 이메일과 6자 이상 비밀번호를 입력하세요.');
+      return;
+    }
+
     try {
-      const result = await configureAdminLogin(adminLoginForm, adminToken);
+      setAdminMessage('Admin 로그인 정보를 설정하는 중입니다.');
+      const result = await configureAdminLogin({ ...adminLoginForm, email }, token);
       setAdminMessage(`${result.user.nickname} 로그인 정보가 설정되었습니다. 로그인 화면에서 다시 로그인하세요.`);
-      setAuthForm((current) => ({ ...current, email: adminLoginForm.email, password: '' }));
+      setAuthForm((current) => ({ ...current, email, password: '' }));
       setApiOnline(true);
     } catch (error) {
       setAdminMessage(error.message);
@@ -1339,14 +1351,15 @@ export default function App() {
                 ))}
               </div>
               <div className="admin-editor">
-                <label htmlFor="admin-token">관리자 토큰</label>
+                <label htmlFor="admin-token">관리자 설정 토큰</label>
                 <input
                   id="admin-token"
                   onChange={(event) => setAdminToken(event.target.value)}
-                  placeholder="local default: admin123"
+                  placeholder="Render ADMIN_TOKEN 값. 설정하지 않았다면 admin123"
                   type="password"
                   value={adminToken}
                 />
+                <p className="field-help">이 값은 Admin 로그인 비밀번호가 아니라 서버 관리자 설정용 토큰입니다.</p>
                 <div className="admin-login-box">
                   <label htmlFor="admin-login-email">Admin 로그인 이메일</label>
                   <input

@@ -151,9 +151,7 @@ export async function updateStage(stageId, stage, token) {
 export async function deleteStage(stageId, token) {
   return request(`/api/admin/stages/${stageId}`, {
     method: 'DELETE',
-    headers: {
-      'x-admin-token': token
-    }
+    headers: createAdminHeaders(token)
   });
 }
 
@@ -164,11 +162,15 @@ export async function configureAdminLogin(payload, token) {
 function adminRequest(path, method, body, token) {
   return request(path, {
     method,
-    headers: {
-      'x-admin-token': token
-    },
+    headers: createAdminHeaders(token),
     body: JSON.stringify(body)
   });
+}
+
+function createAdminHeaders(token) {
+  return {
+    'x-admin-token': String(token || '').trim()
+  };
 }
 
 function withQuery(path, filters = {}) {
