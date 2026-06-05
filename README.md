@@ -84,6 +84,7 @@ PUZZLE_TOWER_DATA_DIR=./data
 
 `PUZZLE_TOWER_DATA_DIR` controls where `puzzle-tower.sqlite` is stored. Locally, the default is `server/data/`.
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
+If environment variables are not available, open the in-app Admin screen, enter the admin token, Admin email, and Admin password, then press "Admin 로그인 설정".
 
 ## API List
 
@@ -290,6 +291,7 @@ Send the admin token with the `x-admin-token` header.
 POST /api/admin/stages
 PUT /api/admin/stages/:id
 DELETE /api/admin/stages/:id
+POST /api/admin/login
 ```
 
 Default local admin token:

@@ -1030,6 +1030,15 @@ h3 {
   padding: 18px;
 }
 
+.admin-login-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(66, 232, 242, 0.22);
+  border-radius: 8px;
+  background: rgba(66, 232, 242, 0.05);
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;

@@ -480,6 +480,23 @@ app.get('/api/users/:nickname/best', (req, res) => {
   res.json(bestByStage);
 });
 
+app.post('/api/admin/login', requireAdmin, async (req, res) => {
+  const adminEmail = String(req.body?.email || '').trim().toLowerCase();
+  const adminPassword = String(req.body?.password || '');
+
+  if (!isEmail(adminEmail) || adminPassword.length < 6) {
+    res.status(400).json({ message: 'Admin 이메일과 6자 이상 비밀번호가 필요합니다.' });
+    return;
+  }
+
+  try {
+    const user = await setAdminLogin(adminEmail, adminPassword);
+    res.json({ user: publicUser(user) });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 app.post('/api/admin/stages', requireAdmin, (req, res) => {
   const validation = validateStagePayload(req.body);
   if (!validation.ok) {
@@ -684,10 +701,13 @@ async function ensureConfiguredAdminLogin() {
     return;
   }
 
+  await setAdminLogin(adminEmail, adminPassword);
+}
+
+async function setAdminLogin(adminEmail, adminPassword) {
   const admin = get('SELECT * FROM users WHERE nickname_key = ?', ['admin']);
   if (!admin) {
-    console.warn('Admin user was not found during startup.');
-    return;
+    throw new Error('Admin 계정을 찾을 수 없습니다.');
   }
 
   const passwordHash = await bcrypt.hash(adminPassword, 10);
@@ -709,7 +729,7 @@ async function ensureConfiguredAdminLogin() {
       'admin',
       emailOwner.id
     ]);
-    return;
+    return getUserById(emailOwner.id);
   }
 
   run('UPDATE users SET email = ?, password_hash = ?, provider = ? WHERE id = ?', [
@@ -718,6 +738,7 @@ async function ensureConfiguredAdminLogin() {
     'admin',
     admin.id
   ]);
+  return getUserById(admin.id);
 }
 
 function createSearchFilters(query, entityAlias, userAlias) {

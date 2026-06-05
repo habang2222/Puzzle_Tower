@@ -157,6 +157,10 @@ export async function deleteStage(stageId, token) {
   });
 }
 
+export async function configureAdminLogin(payload, token) {
+  return adminRequest('/api/admin/login', 'POST', payload, token);
+}
+
 function adminRequest(path, method, body, token) {
   return request(path, {
     method,

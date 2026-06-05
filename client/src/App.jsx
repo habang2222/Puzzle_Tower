@@ -34,6 +34,7 @@ import {
 import { fallbackStages } from './data/stages.js';
 import { calculateScore, createInitialGame, movePlayer, tickGame } from './game/engine.js';
 import {
+  configureAdminLogin,
   createStage,
   deleteCommunityStage,
   deleteCustomBlock,
@@ -111,6 +112,7 @@ export default function App() {
   const [bestRecords, setBestRecords] = useState(() => loadBestRecords());
   const [recordSaved, setRecordSaved] = useState(false);
   const [adminToken, setAdminToken] = useState('');
+  const [adminLoginForm, setAdminLoginForm] = useState({ email: '', password: '' });
   const [adminDraft, setAdminDraft] = useState('');
   const [adminMessage, setAdminMessage] = useState('');
   const [builder, setBuilder] = useState(() => createBuilderState());
@@ -548,6 +550,17 @@ export default function App() {
       await deleteStage(parsed.id, adminToken);
       await refreshStages();
       setAdminMessage('스테이지가 삭제되었습니다.');
+      setApiOnline(true);
+    } catch (error) {
+      setAdminMessage(error.message);
+    }
+  };
+
+  const saveAdminLogin = async () => {
+    try {
+      const result = await configureAdminLogin(adminLoginForm, adminToken);
+      setAdminMessage(`${result.user.nickname} 로그인 정보가 설정되었습니다. 로그인 화면에서 다시 로그인하세요.`);
+      setAuthForm((current) => ({ ...current, email: adminLoginForm.email, password: '' }));
       setApiOnline(true);
     } catch (error) {
       setAdminMessage(error.message);
@@ -1334,6 +1347,27 @@ export default function App() {
                   type="password"
                   value={adminToken}
                 />
+                <div className="admin-login-box">
+                  <label htmlFor="admin-login-email">Admin 로그인 이메일</label>
+                  <input
+                    id="admin-login-email"
+                    onChange={(event) => setAdminLoginForm((current) => ({ ...current, email: event.target.value }))}
+                    type="email"
+                    value={adminLoginForm.email}
+                  />
+                  <label htmlFor="admin-login-password">Admin 로그인 비밀번호</label>
+                  <input
+                    id="admin-login-password"
+                    minLength={6}
+                    onChange={(event) => setAdminLoginForm((current) => ({ ...current, password: event.target.value }))}
+                    type="password"
+                    value={adminLoginForm.password}
+                  />
+                  <button onClick={saveAdminLogin} type="button">
+                    <UserPlus size={17} />
+                    <span>Admin 로그인 설정</span>
+                  </button>
+                </div>
                 <label htmlFor="stage-json">스테이지 JSON</label>
                 <textarea
                   id="stage-json"
