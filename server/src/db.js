@@ -8,7 +8,7 @@ import { seedStages } from './stages.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const sqlWasmPath = path.resolve(__dirname, '../node_modules/sql.js/dist');
-const dataDir = path.resolve(process.env.PUZZLE_TOWER_DATA_DIR || process.env.DATA_DIR || path.resolve(__dirname, '../data'));
+const dataDir = path.resolve(process.env.PUZZLE_TOWER_DATA_DIR || process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.resolve(__dirname, '../data'));
 const dbPath = path.join(dataDir, 'puzzle-tower.sqlite');
 
 let db;
@@ -29,11 +29,16 @@ export async function initDatabase() {
 }
 
 export function getStorageInfo() {
-  const configuredDataDir = String(process.env.PUZZLE_TOWER_DATA_DIR || process.env.DATA_DIR || '').trim();
+  const configuredDataDir = String(process.env.PUZZLE_TOWER_DATA_DIR || process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || '').trim();
+  const isRailway = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_VOLUME_MOUNT_PATH);
   const isRender = Boolean(process.env.RENDER || process.env.RENDER_SERVICE_ID || process.env.RENDER_EXTERNAL_URL);
   const usesVarData = path.resolve(dataDir).startsWith(path.resolve('/var/data'));
-  const warning = isRender;
-  const message = isRender
+  const warning = isRender || (isRailway && !process.env.RAILWAY_VOLUME_MOUNT_PATH && !process.env.PUZZLE_TOWER_DATA_DIR && !process.env.DATA_DIR);
+  const message = isRailway
+    ? process.env.RAILWAY_VOLUME_MOUNT_PATH
+      ? `Railway Volume에 SQLite 데이터를 저장 중입니다: ${dataDir}`
+      : 'Railway 앱 서비스에 Volume이 연결되지 않았습니다. SQLite 데이터가 재배포 때 사라질 수 있습니다.'
+    : isRender
     ? usesVarData
       ? 'Render에서는 /var/data Persistent Disk가 서비스에 실제로 연결되어 있어야 계정, 비밀번호, 맵, 블록 데이터가 유지됩니다. Free 인스턴스만 쓰면 재배포 때 SQLite 데이터가 사라질 수 있습니다.'
       : 'Render 서버에서 영구 저장 위치가 설정되지 않았습니다. 계정, 비밀번호, 맵, 블록 데이터가 재배포 때 사라질 수 있습니다.'
@@ -43,6 +48,8 @@ export function getStorageInfo() {
     driver: 'sqlite',
     dataDir,
     configuredDataDir: configuredDataDir || null,
+    railway: isRailway,
+    railwayVolume: Boolean(process.env.RAILWAY_VOLUME_MOUNT_PATH),
     render: isRender,
     usesVarData,
     warning,

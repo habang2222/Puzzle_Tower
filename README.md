@@ -362,6 +362,36 @@ Backend API URL format:
 https://puzzle-tower.onrender.com/api/health
 ```
 
+### Backend: Railway
+
+The repository includes `railway.json` so Railway can deploy the Express backend from this monorepo.
+
+Recommended Railway service settings:
+
+- Build command: `npm install --prefix server`
+- Start command: `npm start --prefix server`
+- Healthcheck path: `/api/health`
+
+Required Railway variables:
+
+```env
+NODE_ENV=production
+JWT_SECRET=replace-this-with-a-long-random-value
+ADMIN_TOKEN=change-this-token
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=replace-this-admin-password
+CLIENT_ORIGIN=https://habang2222.github.io
+CLIENT_URL=https://habang2222.github.io/Puzzle_Tower/
+```
+
+Current backend storage mode is SQLite. To preserve data on Railway, attach a Volume to the `Puzzle_Tower` web service. The server will automatically use `RAILWAY_VOLUME_MOUNT_PATH` when Railway provides it. You can also set:
+
+```env
+PUZZLE_TOWER_DATA_DIR=${{RAILWAY_VOLUME_MOUNT_PATH}}
+```
+
+Railway Postgres is not automatically used by this SQLite backend. If you create a Postgres service, it can stay online, but the current backend will still use SQLite until the DB adapter is migrated to Postgres.
+
 ## Notes
 
 GitHub Pages can host the frontend only. Email login, ranking save, community map upload, custom block sharing, and admin APIs need the Express backend deployed separately.
