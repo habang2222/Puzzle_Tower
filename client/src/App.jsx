@@ -1544,57 +1544,33 @@ export default function App() {
             </div>
             <p className="result-count">커뮤니티 맵 {communityStages.length}개</p>
             {communityMessage && <p className="admin-message">{communityMessage}</p>}
-            <div className="stage-grid">
+            <div className="community-text-list">
               {communityStages.length === 0 ? (
                 <div className="empty-state">
                   <MessageSquare size={28} />
                   <p>아직 불러온 커뮤니티 맵이 없습니다. 새로고침을 눌러보세요.</p>
                 </div>
               ) : communityStages.map((stage) => (
-                <article className="stage-card community" key={stage.id}>
-                  <div className="stage-card-header">
-                    <span>COMMUNITY</span>
-                    <strong>{stage.difficulty}</strong>
+                <article className="community-text-item" key={stage.id}>
+                  <div className="community-text-main">
+                    <button className="community-title-button" onClick={() => startStage(stage)} type="button">
+                      {stage.title}
+                    </button>
+                    <p>
+                      제작자 {stage.creatorNickname || '알 수 없음'} · 난이도 {stage.difficulty} · 이동 {stage.moveLimit} · 크기 {stage.board.length} x {stage.board[0]?.length || 0}
+                    </p>
+                    <p>
+                      좋아요 {stage.likeCount || 0} · 싫어요 {stage.dislikeCount || 0} · 댓글 {stage.commentCount || 0} · 플레이 {stage.playCount || 0}
+                    </p>
+                    {stage.tags?.length > 0 && <p>{stage.tags.map((tag) => `#${tag}`).join(' ')}</p>}
                   </div>
-                  <h3>{stage.title}</h3>
-                  {stage.showcaseImage && (
-                    <img className="stage-showcase-image" alt={`${stage.title} 자랑 이미지`} src={stage.showcaseImage} />
-                  )}
-                  <MiniBoard stage={stage} compact />
-                  <div className="stage-meta">
-                    <span>{stage.moveLimit} moves</span>
-                    <span>{stage.board.length} x {stage.board[0]?.length || 0}</span>
-                  </div>
-                  {stage.tags?.length > 0 && <TagList tags={stage.tags} />}
-                  {stage.creatorNickname && <p className="stage-author">제작자: {stage.creatorNickname}</p>}
-                  <div className="stage-social-stats" aria-label="커뮤니티 반응">
-                    <span><ThumbsUp size={14} /> {stage.likeCount || 0}</span>
-                    <span><ThumbsDown size={14} /> {stage.dislikeCount || 0}</span>
-                    <span><MessageSquare size={14} /> {stage.commentCount || 0}</span>
-                    <span><Play size={14} /> {stage.playCount || 0}</span>
-                  </div>
-                  <div className="stage-card-actions">
-                    <button className="primary" onClick={() => startStage(stage)} type="button">
-                      <Play size={16} />
-                      <span>플레이</span>
-                    </button>
-                    <button className={stage.reaction === 'like' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'like')} type="button">
-                      <ThumbsUp size={16} />
-                      <span>좋아요</span>
-                    </button>
-                    <button className={stage.reaction === 'dislike' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'dislike')} type="button">
-                      <ThumbsDown size={16} />
-                      <span>싫어요</span>
-                    </button>
-                    <button onClick={() => openCommunityPanel(stage)} type="button">
-                      <MessageSquare size={16} />
-                      <span>댓글</span>
-                    </button>
+                  <div className="community-text-actions">
+                    <button onClick={() => startStage(stage)} type="button">플레이</button>
+                    <button className={stage.reaction === 'like' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'like')} type="button">좋아요</button>
+                    <button className={stage.reaction === 'dislike' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'dislike')} type="button">싫어요</button>
+                    <button onClick={() => openCommunityPanel(stage)} type="button">댓글</button>
                     {user?.id === stage.creatorId && (
-                      <button onClick={() => loadBuilderFromStage(stage)} type="button">
-                        <Pencil size={16} />
-                        <span>내 맵 수정</span>
-                      </button>
+                      <button onClick={() => loadBuilderFromStage(stage)} type="button">내 맵 수정</button>
                     )}
                   </div>
                 </article>
@@ -1617,6 +1593,7 @@ export default function App() {
                 onReport={submitCommentReport}
                 onSubmit={submitStageComment}
                 stage={communityPanelStage}
+                textOnly
                 user={user}
               />
             )}
@@ -2401,6 +2378,7 @@ function CommunityStagePanel({
   onReport,
   onSubmit,
   stage,
+  textOnly = false,
   user
 }) {
   return (
@@ -2415,19 +2393,31 @@ function CommunityStagePanel({
           <X size={18} />
         </button>
       </div>
-      {stage.showcaseImage && <img className="community-showcase" alt={`${stage.title} 자랑 이미지`} src={stage.showcaseImage} />}
+      {!textOnly && stage.showcaseImage && <img className="community-showcase" alt={`${stage.title} 자랑 이미지`} src={stage.showcaseImage} />}
       <div className="community-actions">
         <button className={stage.reaction === 'like' ? 'active' : ''} onClick={onLike} type="button">
-          <ThumbsUp size={16} />
-          <span>좋아요 {stage.likeCount || 0}</span>
+          {textOnly ? `좋아요 ${stage.likeCount || 0}` : (
+            <>
+              <ThumbsUp size={16} />
+              <span>좋아요 {stage.likeCount || 0}</span>
+            </>
+          )}
         </button>
         <button className={stage.reaction === 'dislike' ? 'active' : ''} onClick={onDislike} type="button">
-          <ThumbsDown size={16} />
-          <span>싫어요 {stage.dislikeCount || 0}</span>
+          {textOnly ? `싫어요 ${stage.dislikeCount || 0}` : (
+            <>
+              <ThumbsDown size={16} />
+              <span>싫어요 {stage.dislikeCount || 0}</span>
+            </>
+          )}
         </button>
         <span>
-          <MessageSquare size={16} />
-          댓글 {stage.commentCount || comments.length || 0}
+          {textOnly ? `댓글 ${stage.commentCount || comments.length || 0}` : (
+            <>
+              <MessageSquare size={16} />
+              댓글 {stage.commentCount || comments.length || 0}
+            </>
+          )}
         </span>
       </div>
       <div className="comment-composer">
@@ -2455,8 +2445,12 @@ function CommunityStagePanel({
               </div>
               <p>{comment.body}</p>
               <button onClick={() => onReport(comment)} type="button">
-                <Flag size={15} />
-                <span>신고</span>
+                {textOnly ? '신고' : (
+                  <>
+                    <Flag size={15} />
+                    <span>신고</span>
+                  </>
+                )}
               </button>
             </article>
           ))

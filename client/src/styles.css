@@ -427,10 +427,77 @@ h3 {
 
 .stage-card-actions button.active,
 .community-actions button.active,
-.game-actions button.active {
+.game-actions button.active,
+.community-text-actions button.active {
   border-color: var(--amber);
   color: var(--amber);
   background: rgba(255, 200, 87, 0.1);
+}
+
+.community-text-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.community-text-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.community-text-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.community-text-main p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.community-title-button {
+  justify-content: flex-start;
+  min-height: auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  color: #fff;
+  background: transparent;
+  font-size: 1.08rem;
+  font-weight: 900;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.community-title-button:hover,
+.community-text-actions button:hover {
+  transform: none;
+  color: var(--cyan);
+}
+
+.community-text-actions {
+  display: flex;
+  align-items: start;
+  justify-content: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.community-text-actions button {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  color: var(--cyan);
+  background: transparent;
+  font-size: 0.9rem;
+  font-weight: 900;
 }
 
 .community-panel {
@@ -1569,8 +1636,13 @@ h3 {
   }
 
   .comment-composer,
+  .community-text-item,
   .report-item {
     grid-template-columns: 1fr;
+  }
+
+  .community-text-actions {
+    justify-content: flex-start;
   }
 
   .report-actions {
