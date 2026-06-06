@@ -494,6 +494,47 @@ h3 {
   overflow: hidden;
 }
 
+.tile[data-tooltip] {
+  overflow: visible;
+}
+
+.tile[data-tooltip]:hover,
+.tile[data-tooltip]:focus-visible {
+  z-index: 12;
+}
+
+.tile[data-tooltip]::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 20;
+  width: max-content;
+  max-width: min(240px, 72vw);
+  padding: 8px 10px;
+  border: 1px solid rgba(66, 232, 242, 0.42);
+  border-radius: 8px;
+  color: #eef7f2;
+  background: rgba(11, 15, 20, 0.96);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.36);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  text-shadow: none;
+  transform: translate(-50%, 6px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: normal;
+}
+
+.tile[data-tooltip]:hover::before,
+.tile[data-tooltip]:focus-visible::before {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .floor,
 .start {
   background: #151a21;

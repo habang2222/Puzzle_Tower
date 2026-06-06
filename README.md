@@ -24,6 +24,8 @@ Puzzle Tower is a full-stack web puzzle game. Players clear tile stages with a m
 - Reserved Admin nickname protection with unicode/control-character filtering
 - Configurable SQLite data directory for persistent storage
 - Responsive sticky game controls
+- Mouse hover tile descriptions
+- Input proof and rate checks for stronger macro-record blocking
 - AdSense slot integration
 - GitHub Pages deployment workflow for the frontend
 - Render-ready backend configuration
@@ -350,6 +352,8 @@ Important persistence note:
 
 - Render Free web services do not provide persistent disks. Local SQLite data can disappear after redeploys, restarts, or spin-downs.
 - To preserve users, login records, maps, blocks, and rankings on Render, attach a Render Persistent Disk and set `PUZZLE_TOWER_DATA_DIR` to the disk mount path, for example `/var/data`.
+- If you deploy on Railway with SQLite, attach a Railway Volume and set `PUZZLE_TOWER_DATA_DIR` to the mounted folder. A Railway project dashboard URL is not a database connection string and should not be committed to git.
+- If you use a Railway Postgres database, copy its private connection variable in the Railway dashboard. Do not paste database passwords into source files.
 - If you must stay fully free, use a hosted database such as Supabase/Postgres instead of local SQLite.
 
 Backend API URL format:

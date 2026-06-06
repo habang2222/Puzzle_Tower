@@ -68,6 +68,8 @@ import {
 const bestRecordKey = 'puzzle-tower-best-records';
 const nicknameKey = 'puzzle-tower-nickname';
 const blockLibraryKey = 'puzzle-tower-custom-blocks';
+const minMoveIntervalMs = 95;
+const maxProofInputs = 512;
 const basePalette = [
   { tile: '.', label: '길' },
   { tile: '#', label: '벽' },
@@ -116,6 +118,8 @@ export default function App() {
   const [game, setGame] = useState(() => createInitialGame({ ...fallbackStages[0], isOfficial: true }));
   const [elapsed, setElapsed] = useState(0);
   const timerStartRef = useRef(0);
+  const lastMoveAtRef = useRef(0);
+  const inputProofRef = useRef([]);
   const [apiOnline, setApiOnline] = useState(false);
   const [rankings, setRankings] = useState([]);
   const [rankingStageId, setRankingStageId] = useState('');
@@ -272,17 +276,27 @@ export default function App() {
 
     const score = calculateScore(selectedStage, elapsed, game.movesUsed);
     const playerName = user?.nickname || nickname.trim() || 'player';
-    const record = {
+    const recordBase = {
       nickname: playerName,
       stageId: selectedStage.id,
       clearTime: elapsed,
       moveUsed: game.movesUsed
     };
+    const record = {
+      ...recordBase,
+      proof: {
+        version: 1,
+        stageId: selectedStage.id,
+        clearTime: elapsed,
+        moveUsed: game.movesUsed,
+        inputs: inputProofRef.current.slice(-maxProofInputs)
+      }
+    };
 
     const nextBest = {
       ...bestRecords,
       [selectedStage.id]: chooseBetterRecord(bestRecords[selectedStage.id], {
-        ...record,
+        ...recordBase,
         score,
         stageLevel: selectedStage.level
       })
@@ -300,6 +314,8 @@ export default function App() {
   const startStage = useCallback((stage) => {
     const normalizedStage = normalizeStage(stage);
     timerStartRef.current = performance.now();
+    lastMoveAtRef.current = 0;
+    inputProofRef.current = [];
     setSelectedStage(normalizedStage);
     setGame(createInitialGame(normalizedStage));
     setElapsed(0);
@@ -310,6 +326,8 @@ export default function App() {
 
   const restartStage = useCallback(() => {
     timerStartRef.current = performance.now();
+    lastMoveAtRef.current = 0;
+    inputProofRef.current = [];
     setGame(createInitialGame(selectedStage));
     setElapsed(0);
     setRecordSaved(false);
@@ -326,9 +344,33 @@ export default function App() {
   }, [selectedStage, stages, startStage]);
 
   const handleMove = useCallback((direction) => {
+    const now = performance.now();
+    if (lastMoveAtRef.current && now - lastMoveAtRef.current < minMoveIntervalMs) {
+      setGame((current) => (
+        current.status === 'playing'
+          ? { ...current, message: '입력이 너무 빠릅니다. 매크로 방지를 위해 잠시 후 움직이세요.' }
+          : current
+      ));
+      return;
+    }
+    lastMoveAtRef.current = now;
+
     const currentElapsed = timerStartRef.current ? getElapsedFromTimer(timerStartRef.current) : elapsed;
     setElapsed(currentElapsed);
-    setGame((current) => movePlayer(current, direction, currentElapsed));
+    setGame((current) => {
+      const next = movePlayer(current, direction, currentElapsed);
+      if (next.movesUsed > current.movesUsed) {
+        inputProofRef.current = [
+          ...inputProofRef.current,
+          {
+            direction,
+            t: currentElapsed,
+            movesUsed: next.movesUsed
+          }
+        ].slice(-maxProofInputs);
+      }
+      return next;
+    });
   }, [elapsed]);
 
   useEffect(() => {
@@ -338,6 +380,10 @@ export default function App() {
 
     const onKeyDown = (event) => {
       if (game.status !== 'playing') {
+        return;
+      }
+      if (event.repeat) {
+        event.preventDefault();
         return;
       }
 
@@ -1689,6 +1735,7 @@ function GameBoard({ game, showPathHint = false }) {
   const columns = game.tiles[0]?.length || 1;
   const customBlocks = game.customBlocks || [];
   const currentBlock = getCurrentPlayerBlock(game);
+  const [hoveredTileInfo, setHoveredTileInfo] = useState(null);
   const pathCells = showPathHint ? new Set(findPathToGoal(game).slice(1).map((point) => pointKey(point))) : new Set();
 
   if (!game.validBoard || !game.player || !game.goal || !game.tiles.length) {
@@ -1708,6 +1755,8 @@ function GameBoard({ game, showPathHint = false }) {
             const isPlayer = game.player.row === rowIndex && game.player.col === colIndex;
             const point = { row: rowIndex, col: colIndex };
             const fogged = isFogged(game, point);
+            const tileInfo = fogged ? null : getTileInfo(tile, customBlocks);
+            const tooltip = tileInfo ? `${tileInfo.name}: ${tileInfo.description || createBlockSummary(tileInfo)}` : '';
             const className = [
               'tile',
               tileClass(tile, customBlocks),
@@ -1716,14 +1765,26 @@ function GameBoard({ game, showPathHint = false }) {
               isPlayer ? 'player' : ''
             ].filter(Boolean).join(' ');
             return (
-              <div className={className} key={`${rowIndex}-${colIndex}`} style={tileStyle(tile, customBlocks)}>
+              <div
+                aria-label={tooltip || undefined}
+                className={className}
+                data-tooltip={tooltip || undefined}
+                key={`${rowIndex}-${colIndex}`}
+                onBlur={() => setHoveredTileInfo(null)}
+                onFocus={() => setHoveredTileInfo(tileInfo)}
+                onMouseEnter={() => setHoveredTileInfo(tileInfo)}
+                onMouseLeave={() => setHoveredTileInfo(null)}
+                style={tileStyle(tile, customBlocks)}
+                tabIndex={tileInfo ? 0 : undefined}
+                title={tooltip || undefined}
+              >
                 {fogged ? '' : isPlayer ? <Crown size={24} /> : tileLabel(tile, customBlocks)}
               </div>
             );
           })
         )}
       </div>
-      <BlockDescriptionPanel block={currentBlock} />
+      <BlockDescriptionPanel block={hoveredTileInfo || currentBlock} />
     </div>
   );
 }
@@ -1785,22 +1846,38 @@ function MiniBoard({ compact = false, stage }) {
 }
 
 function BuilderBoard({ board, customBlocks, onPaint }) {
+  const [hoveredTileInfo, setHoveredTileInfo] = useState(null);
+
   return (
-    <div className="builder-board" style={{ '--columns': board[0]?.length || 1 }}>
-      {board.map((row, rowIndex) =>
-        row.map((tile, colIndex) => (
-          <button
-            className={`tile ${tileClass(tile, customBlocks)}`}
-            key={`${rowIndex}-${colIndex}`}
-            onClick={() => onPaint(rowIndex, colIndex)}
-            style={tileStyle(tile, customBlocks)}
-            type="button"
-          >
-            {tileLabel(tile, customBlocks)}
-          </button>
-        ))
-      )}
-    </div>
+    <>
+      <div className="builder-board" style={{ '--columns': board[0]?.length || 1 }}>
+        {board.map((row, rowIndex) =>
+          row.map((tile, colIndex) => {
+            const tileInfo = getTileInfo(tile, customBlocks);
+            const tooltip = tileInfo ? `${tileInfo.name}: ${tileInfo.description || createBlockSummary(tileInfo)}` : '';
+            return (
+              <button
+                aria-label={tooltip || undefined}
+                className={`tile ${tileClass(tile, customBlocks)}`}
+                data-tooltip={tooltip || undefined}
+                key={`${rowIndex}-${colIndex}`}
+                onBlur={() => setHoveredTileInfo(null)}
+                onClick={() => onPaint(rowIndex, colIndex)}
+                onFocus={() => setHoveredTileInfo(tileInfo)}
+                onMouseEnter={() => setHoveredTileInfo(tileInfo)}
+                onMouseLeave={() => setHoveredTileInfo(null)}
+                style={tileStyle(tile, customBlocks)}
+                title={tooltip || undefined}
+                type="button"
+              >
+                {tileLabel(tile, customBlocks)}
+              </button>
+            );
+          })
+        )}
+      </div>
+      <BlockDescriptionPanel block={hoveredTileInfo} />
+    </>
   );
 }
 
@@ -3305,6 +3382,74 @@ function getCurrentPlayerBlock(game) {
     return null;
   }
   return getCustomBlock(tile, game.customBlocks || []) || null;
+}
+
+function getTileInfo(tile, customBlocks = []) {
+  const customBlock = getCustomBlock(tile, customBlocks);
+  if (customBlock) {
+    return customBlock;
+  }
+
+  const baseTiles = {
+    '.': {
+      tile: '.',
+      name: '길',
+      color: '#475569',
+      effect: 'floor',
+      description: '일반 길입니다. 플레이어가 지나갈 수 있습니다.'
+    },
+    '#': {
+      tile: '#',
+      name: '벽',
+      color: '#64748b',
+      effect: 'wall',
+      description: '지나갈 수 없는 벽입니다.'
+    },
+    P: {
+      tile: 'P',
+      name: '시작',
+      color: '#38bdf8',
+      effect: 'floor',
+      description: '플레이어가 시작하는 위치입니다.'
+    },
+    G: {
+      tile: 'G',
+      name: '목표',
+      color: '#42f29b',
+      effect: 'goal',
+      description: '이 칸에 도착하면 스테이지를 클리어합니다.'
+    },
+    K: {
+      tile: 'K',
+      name: '열쇠',
+      color: '#ffc857',
+      effect: 'key',
+      description: '잠금 타일을 열 수 있는 열쇠입니다.'
+    },
+    L: {
+      tile: 'L',
+      name: '잠금',
+      color: '#ff5d6c',
+      effect: 'lock',
+      description: '열쇠가 있어야 지나갈 수 있는 잠금 타일입니다.'
+    }
+  };
+
+  if (baseTiles[tile]) {
+    return baseTiles[tile];
+  }
+
+  if (/^[A-Z]$/.test(tile)) {
+    return {
+      tile,
+      name: `포탈 ${tile}`,
+      color: '#d946ef',
+      effect: 'floor',
+      description: '같은 문자 포탈의 다른 위치로 순간이동합니다.'
+    };
+  }
+
+  return null;
 }
 
 function createBlockSummary(block) {

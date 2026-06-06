@@ -13,6 +13,9 @@ const port = Number(process.env.PORT || 4000);
 const configuredAdminToken = String(process.env.ADMIN_TOKEN || '').trim();
 const adminToken = configuredAdminToken || 'admin123';
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-me';
+const recordRateLimitWindowMs = 10000;
+const recordRateLimitMax = 8;
+const recordRateLimits = new Map();
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '1mb' }));
@@ -524,6 +527,17 @@ app.post('/api/records', optionalAuth, (req, res) => {
     return;
   }
 
+  const proofValidation = validateRecordProof(body.proof || body.inputProof || body.gameProof, {
+    stage,
+    stageId,
+    clearTime,
+    moveUsed
+  });
+  if (!proofValidation.ok) {
+    res.status(400).json({ message: proofValidation.message });
+    return;
+  }
+
   const existingNicknameOwner = get('SELECT id, provider FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
   if (!req.user && existingNicknameOwner && existingNicknameOwner.provider !== 'guest') {
     res.status(401).json({ message: '등록된 닉네임으로 기록을 저장하려면 로그인해야 합니다.' });
@@ -531,6 +545,12 @@ app.post('/api/records', optionalAuth, (req, res) => {
   }
 
   const userId = req.user?.id || findOrCreateUser(nicknameValidation);
+  const rateLimit = checkRecordRateLimit(req, userId);
+  if (!rateLimit.ok) {
+    res.status(429).json({ message: rateLimit.message });
+    return;
+  }
+
   const normalizedClearTime = Number(clearTime.toFixed(4));
   const score = calculateScore(stage.level, stage.move_limit, normalizedClearTime, moveUsed);
   const existingRecord = get('SELECT * FROM records WHERE user_id = ? AND stage_id = ?', [userId, stageId]);
@@ -1015,6 +1035,124 @@ function isBetterRecord(next, previous) {
     return next.clear_time < previous.clear_time;
   }
   return next.move_used < previous.move_used;
+}
+
+function validateRecordProof(proof, { stage, stageId, clearTime, moveUsed }) {
+  if (!proof && process.env.ALLOW_UNVERIFIED_RECORDS === 'true') {
+    return { ok: true };
+  }
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) {
+    return { ok: false, message: '매크로 방지를 위해 게임 입력 기록이 필요합니다. 페이지를 새로고침한 뒤 다시 플레이하세요.' };
+  }
+
+  const proofStageId = Number(proof.stageId);
+  const proofClearTime = Number(proof.clearTime);
+  const proofMoveUsed = Number(proof.moveUsed);
+  const inputs = Array.isArray(proof.inputs) ? proof.inputs : [];
+
+  if (Number.isFinite(proofStageId) && proofStageId !== stageId) {
+    return { ok: false, message: '기록 검증 스테이지가 일치하지 않습니다.' };
+  }
+  if (Number.isFinite(proofClearTime) && Math.abs(proofClearTime - clearTime) > 0.35) {
+    return { ok: false, message: '기록 시간 검증에 실패했습니다.' };
+  }
+  if (Number.isFinite(proofMoveUsed) && proofMoveUsed !== moveUsed) {
+    return { ok: false, message: '이동 횟수 검증에 실패했습니다.' };
+  }
+  if (!inputs.length || inputs.length > stage.move_limit) {
+    return { ok: false, message: '입력 기록 개수가 올바르지 않습니다.' };
+  }
+
+  const allowedDirections = new Set(['up', 'down', 'left', 'right']);
+  const intervals = [];
+  let previousTime = null;
+  let previousMovesUsed = 0;
+
+  for (const input of inputs) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return { ok: false, message: '입력 기록 형식이 올바르지 않습니다.' };
+    }
+
+    const direction = String(input.direction || '').trim().toLowerCase();
+    const time = Number(input.t ?? input.time);
+    const inputMovesUsed = Number(input.movesUsed);
+
+    if (!allowedDirections.has(direction) || !Number.isFinite(time) || !Number.isFinite(inputMovesUsed)) {
+      return { ok: false, message: '입력 기록 값이 올바르지 않습니다.' };
+    }
+    if (time < 0 || time > clearTime + 0.5) {
+      return { ok: false, message: '입력 시간이 클리어 시간과 맞지 않습니다.' };
+    }
+    if (!Number.isInteger(inputMovesUsed) || inputMovesUsed < previousMovesUsed || inputMovesUsed > stage.move_limit) {
+      return { ok: false, message: '입력별 이동 횟수가 올바르지 않습니다.' };
+    }
+
+    if (previousTime !== null) {
+      const interval = time - previousTime;
+      if (interval < 0) {
+        return { ok: false, message: '입력 시간이 역순입니다.' };
+      }
+      if (interval < 0.085) {
+        return { ok: false, message: '입력 간격이 너무 짧습니다. 매크로 기록은 저장할 수 없습니다.' };
+      }
+      intervals.push(interval);
+    }
+
+    previousTime = time;
+    previousMovesUsed = inputMovesUsed;
+  }
+
+  if (previousMovesUsed !== moveUsed) {
+    return { ok: false, message: '최종 이동 횟수 검증에 실패했습니다.' };
+  }
+  if (clearTime + 0.02 < Math.max(0.2, inputs.length * 0.085)) {
+    return { ok: false, message: '클리어 시간이 입력 수에 비해 너무 짧습니다.' };
+  }
+  if (intervals.length >= 8 && isLikelyFixedIntervalMacro(intervals)) {
+    return { ok: false, message: '입력 간격이 지나치게 일정합니다. 매크로 의심 기록은 저장할 수 없습니다.' };
+  }
+
+  return { ok: true };
+}
+
+function isLikelyFixedIntervalMacro(intervals) {
+  const average = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+  const variance = intervals.reduce((sum, value) => sum + (value - average) ** 2, 0) / intervals.length;
+  const standardDeviation = Math.sqrt(variance);
+  const buckets = new Map();
+  intervals.forEach((interval) => {
+    const bucket = interval.toFixed(2);
+    buckets.set(bucket, (buckets.get(bucket) || 0) + 1);
+  });
+  const maxBucket = Math.max(...buckets.values());
+  return standardDeviation < 0.006 && maxBucket / intervals.length > 0.75;
+}
+
+function checkRecordRateLimit(req, userId) {
+  const now = Date.now();
+  const key = `${userId}:${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+  const recent = (recordRateLimits.get(key) || []).filter((timestamp) => now - timestamp < recordRateLimitWindowMs);
+
+  if (recent.length >= recordRateLimitMax) {
+    recordRateLimits.set(key, recent);
+    return { ok: false, message: '기록 저장 요청이 너무 많습니다. 잠시 후 다시 시도하세요.' };
+  }
+
+  recent.push(now);
+  recordRateLimits.set(key, recent);
+
+  if (recordRateLimits.size > 1000) {
+    for (const [rateKey, timestamps] of recordRateLimits.entries()) {
+      const active = timestamps.filter((timestamp) => now - timestamp < recordRateLimitWindowMs);
+      if (active.length) {
+        recordRateLimits.set(rateKey, active);
+      } else {
+        recordRateLimits.delete(rateKey);
+      }
+    }
+  }
+
+  return { ok: true };
 }
 
 function toStage(row) {
