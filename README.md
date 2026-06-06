@@ -13,6 +13,7 @@ Puzzle Tower is a full-stack web puzzle game. Players clear tile stages with a m
 - Email/password signup and login
 - Player-made map builder and upload flow
 - Custom block editor with safe JSON block rules
+- Moving custom blocks with `push`, `chase`, and `moveBlock` commands
 - Public custom block library and download API
 - Public community map list
 - Community map tags, search, and creator filters

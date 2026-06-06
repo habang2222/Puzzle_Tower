@@ -82,6 +82,16 @@ export function movePlayer(game, directionName, elapsedSeconds = game.elapsedSec
     return { ...currentGame, message: '벽은 지나갈 수 없습니다.' };
   }
 
+  if (customAction?.effect === 'chase') {
+    return {
+      ...currentGame,
+      movesUsed: currentGame.movesUsed + Math.max(Number(customAction.moveCost || 1), 1),
+      elapsedSeconds,
+      status: 'failed',
+      message: customAction.message || '추적 블록에 닿았습니다. 게임오버!'
+    };
+  }
+
   if (customAction?.blocked) {
     return { ...currentGame, message: customAction.failMessage || '조건을 만족해야 지나갈 수 있습니다.' };
   }
@@ -98,6 +108,15 @@ export function movePlayer(game, directionName, elapsedSeconds = game.elapsedSec
 
   if (customAction?.takeKey) {
     hasKey = false;
+  }
+
+  if (customAction?.effect === 'push') {
+    const pushResult = applyPushBlock(tiles, next, directionName, nextTile);
+    if (!pushResult.ok) {
+      return { ...currentGame, message: customAction.failMessage || pushResult.message };
+    }
+    tiles = pushResult.tiles;
+    message = customAction.message || pushResult.message;
   }
 
   if (nextTile === 'K' || customAction?.effect === 'key' || customAction?.consumeOnUse) {
@@ -129,8 +148,20 @@ export function movePlayer(game, directionName, elapsedSeconds = game.elapsedSec
     pendingSpawns = [...pendingSpawns, ...spawnResult.pendingSpawns];
   }
 
+  let actionStatus = null;
+  if (customAction?.moveBlock?.length) {
+    const moveBlockResult = applyMoveBlockActions(tiles, customAction.moveBlock, player);
+    tiles = moveBlockResult.tiles;
+    if (moveBlockResult.failed) {
+      actionStatus = 'failed';
+      message = moveBlockResult.message;
+    } else if (moveBlockResult.moved > 0) {
+      message = customAction.message || moveBlockResult.message || message;
+    }
+  }
+
   let forcedStatus = null;
-  if (customAction && customAction.effect !== 'bounce' && customAction.effect !== 'gameover') {
+  if (!actionStatus && customAction && customAction.effect !== 'bounce' && customAction.effect !== 'gameover') {
     const forcedResult = applyForcedExit({ ...currentGame, tiles, player, hasKey, pendingSpawns }, customAction, elapsedSeconds);
     if (forcedResult) {
       player = forcedResult.player;
@@ -142,10 +173,25 @@ export function movePlayer(game, directionName, elapsedSeconds = game.elapsedSec
     }
   }
 
+  let autonomousStatus = null;
+  const alreadyCleared = customAction?.effect === 'goal' || (player.row === currentGame.goal.row && player.col === currentGame.goal.col);
+  if (!actionStatus && !forcedStatus && !alreadyCleared && customAction?.effect !== 'gameover') {
+    const chaseResult = applyChaseBlocks(tiles, currentGame.customBlocks, player);
+    tiles = chaseResult.tiles;
+    if (chaseResult.failed) {
+      autonomousStatus = 'failed';
+      message = chaseResult.message;
+    } else if (chaseResult.moved > 0 && message === '좋습니다. 계속 이동하세요.') {
+      message = '추적 블록이 플레이어 쪽으로 움직였습니다.';
+    }
+  }
+
   const moveCost = Math.max(Number(customAction?.moveCost || 1), 1);
   const movesUsed = currentGame.movesUsed + moveCost;
   const status =
     forcedStatus ||
+    actionStatus ||
+    autonomousStatus ||
     (customAction?.effect === 'gameover'
       ? 'failed'
       : customAction?.effect === 'goal' || (player.row === currentGame.goal.row && player.col === currentGame.goal.col)
@@ -159,7 +205,7 @@ export function movePlayer(game, directionName, elapsedSeconds = game.elapsedSec
   }
   if (status === 'failed' && customAction?.effect === 'gameover') {
     message = customAction.message || '위험 블록을 밟았습니다. 게임오버!';
-  } else if (status === 'failed' && !forcedStatus) {
+  } else if (status === 'failed' && !forcedStatus && !actionStatus && !autonomousStatus) {
     message = '이동 횟수를 모두 사용했습니다.';
   }
 
@@ -265,6 +311,7 @@ function normalizeBlockAction(block) {
     giveKey: block?.giveKey === true,
     takeKey: block?.takeKey === true,
     spawn: normalizeSpawnItems(block?.spawn || block?.spawns || block?.change || block?.changes || []),
+    moveBlock: normalizeMoveBlockItems(block?.moveBlock || block?.moveBlocks || block?.move || block?.moves || []),
     rules: normalizeRules(block?.if || block?.rules || [])
   };
 }
@@ -418,6 +465,177 @@ function applySpawnActions(tiles, spawns, origin) {
   return nextTiles;
 }
 
+function applyPushBlock(tiles, blockPoint, directionName, blockTile) {
+  const direction = directions[directionName];
+  if (!direction) {
+    return { ok: false, message: '밀 방향이 올바르지 않습니다.' };
+  }
+
+  const destination = {
+    row: blockPoint.row + direction.row,
+    col: blockPoint.col + direction.col
+  };
+
+  if (getTile(tiles, destination) !== '.') {
+    return { ok: false, message: '블록을 밀 공간이 없습니다.' };
+  }
+
+  const nextTiles = tiles.map((row) => [...row]);
+  nextTiles[destination.row][destination.col] = blockTile;
+  nextTiles[blockPoint.row][blockPoint.col] = '.';
+  return { ok: true, tiles: nextTiles, message: '블록을 한 칸 밀었습니다.' };
+}
+
+function applyMoveBlockActions(tiles, actions, player) {
+  let nextTiles = tiles.map((row) => [...row]);
+  let moved = 0;
+
+  for (const action of normalizeMoveBlockItems(actions)) {
+    const positions = findTilePositions(nextTiles, action.targetTile)
+      .sort((a, b) => sortForMoveDirection(a, b, action.direction))
+      .slice(0, action.limit);
+
+    for (const start of positions) {
+      const currentTile = getTile(nextTiles, start);
+      if (currentTile !== action.targetTile) {
+        continue;
+      }
+
+      let point = start;
+      for (let stepIndex = 0; stepIndex < action.distance; stepIndex += 1) {
+        const nextPoint = findMovableBlockDestination(nextTiles, point, player, action.direction);
+        if (!nextPoint) {
+          break;
+        }
+        if (nextPoint.row === player.row && nextPoint.col === player.col) {
+          return {
+            tiles: nextTiles,
+            moved,
+            failed: true,
+            message: '움직이는 블록에 잡혔습니다. 게임오버!'
+          };
+        }
+        nextTiles[nextPoint.row][nextPoint.col] = action.targetTile;
+        nextTiles[point.row][point.col] = '.';
+        point = nextPoint;
+        moved += 1;
+      }
+    }
+  }
+
+  return {
+    tiles: nextTiles,
+    moved,
+    failed: false,
+    message: moved ? '지정한 블록이 움직였습니다.' : ''
+  };
+}
+
+function applyChaseBlocks(tiles, customBlocks, player) {
+  const chaseTiles = new Set(
+    normalizeCustomBlocks(customBlocks)
+      .filter((block) => normalizeBlockAction(block).effect === 'chase')
+      .map((block) => block.tile)
+  );
+
+  if (!chaseTiles.size) {
+    return { tiles, moved: 0, failed: false, message: '' };
+  }
+
+  let nextTiles = tiles.map((row) => [...row]);
+  let moved = 0;
+  const positions = [];
+  nextTiles.forEach((row, rowIndex) => {
+    row.forEach((tile, colIndex) => {
+      if (chaseTiles.has(tile)) {
+        positions.push({ row: rowIndex, col: colIndex, tile });
+      }
+    });
+  });
+
+  positions.sort((a, b) => Math.abs(b.row - player.row) + Math.abs(b.col - player.col) - (Math.abs(a.row - player.row) + Math.abs(a.col - player.col)));
+
+  for (const position of positions) {
+    if (getTile(nextTiles, position) !== position.tile) {
+      continue;
+    }
+    const nextPoint = findMovableBlockDestination(nextTiles, position, player, 'towardPlayer');
+    if (!nextPoint) {
+      continue;
+    }
+    if (nextPoint.row === player.row && nextPoint.col === player.col) {
+      return {
+        tiles: nextTiles,
+        moved,
+        failed: true,
+        message: '추적 블록에 잡혔습니다. 게임오버!'
+      };
+    }
+    nextTiles[nextPoint.row][nextPoint.col] = position.tile;
+    nextTiles[position.row][position.col] = '.';
+    moved += 1;
+  }
+
+  return { tiles: nextTiles, moved, failed: false, message: moved ? '추적 블록이 움직였습니다.' : '' };
+}
+
+function findTilePositions(tiles, targetTile) {
+  const positions = [];
+  tiles.forEach((row, rowIndex) => {
+    row.forEach((tile, colIndex) => {
+      if (tile === targetTile) {
+        positions.push({ row: rowIndex, col: colIndex });
+      }
+    });
+  });
+  return positions;
+}
+
+function findMovableBlockDestination(tiles, point, player, directionName) {
+  const candidates = getMoveStepCandidates(point, player, directionName);
+  for (const step of candidates) {
+    const next = {
+      row: point.row + step.row,
+      col: point.col + step.col
+    };
+    if (next.row === player.row && next.col === player.col) {
+      return next;
+    }
+    if (getTile(tiles, next) === '.') {
+      return next;
+    }
+  }
+  return null;
+}
+
+function getMoveStepCandidates(point, player, directionName) {
+  if (directions[directionName]) {
+    return [directions[directionName]];
+  }
+
+  const rowDelta = player.row - point.row;
+  const colDelta = player.col - point.col;
+  const rowStep = rowDelta === 0 ? null : { row: Math.sign(rowDelta), col: 0 };
+  const colStep = colDelta === 0 ? null : { row: 0, col: Math.sign(colDelta) };
+  const primary = Math.abs(rowDelta) >= Math.abs(colDelta) ? rowStep : colStep;
+  const secondary = primary === rowStep ? colStep : rowStep;
+  const steps = [primary, secondary].filter(Boolean);
+
+  if (directionName === 'awayFromPlayer') {
+    return steps.map((step) => ({ row: -step.row, col: -step.col }));
+  }
+
+  return steps;
+}
+
+function sortForMoveDirection(a, b, directionName) {
+  if (directionName === 'right') return b.col - a.col;
+  if (directionName === 'left') return a.col - b.col;
+  if (directionName === 'down') return b.row - a.row;
+  if (directionName === 'up') return a.row - b.row;
+  return 0;
+}
+
 function resolveSpawnPoint(spawn, origin) {
   if (Number.isFinite(spawn.row) && Number.isFinite(spawn.col)) {
     return {
@@ -506,6 +724,17 @@ function applyForcedExit(game, action, elapsedSeconds) {
     };
   }
 
+  if (blockAction?.effect === 'chase') {
+    return {
+      player,
+      hasKey,
+      tiles,
+      pendingSpawns,
+      status: 'failed',
+      message: blockAction.message || '추적 블록에 닿았습니다. 게임오버!'
+    };
+  }
+
   if (isTeleport(tile, game.customBlocks)) {
     const pair = game.teleports[tile] || [];
     const exit = pair.find((point) => point.row !== next.row || point.col !== next.col);
@@ -559,10 +788,52 @@ function normalizeSpawnItems(spawn) {
     .filter(Boolean);
 }
 
+function normalizeMoveBlockItems(items) {
+  const source = Array.isArray(items) ? items : items ? [items] : [];
+
+  return source
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => {
+      const targetTile = normalizeMoveTargetTile(item.targetTile || item.tile || item.from);
+      const direction = normalizeMoveDirection(item.direction || item.to || item.moveDirection || 'towardPlayer');
+      const distance = Math.max(Math.min(Number(item.distance || 1), 5), 1);
+      const limit = Math.max(Math.min(Number(item.limit || item.count || 12), 12), 1);
+
+      if (!targetTile || !direction) {
+        return null;
+      }
+
+      return {
+        targetTile,
+        direction,
+        distance: Math.round(distance),
+        limit: Math.round(limit)
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeMoveDirection(value) {
+  const raw = String(value || '').trim();
+  const compact = raw.toLowerCase().replace(/[\s_-]/g, '');
+  if (compact === 'player' || compact === 'towardplayer' || compact === 'toplayer') {
+    return 'towardPlayer';
+  }
+  if (compact === 'awayplayer' || compact === 'awayfromplayer' || compact === 'fromplayer') {
+    return 'awayFromPlayer';
+  }
+  return normalizeDirection(raw);
+}
+
 function normalizeSpawnTile(value) {
   const tile = String(value || '').trim().slice(0, 1).toUpperCase();
   if (tile !== 'P' && (tile === '.' || tile === '#' || ['G', 'K', 'L'].includes(tile) || /^[C-Z]$/.test(tile))) {
     return tile;
   }
   return '';
+}
+
+function normalizeMoveTargetTile(value) {
+  const tile = String(value || '').trim().slice(0, 1).toUpperCase();
+  return /^[C-Z]$/.test(tile) && !['P', 'G', 'K', 'L', 'A', 'B'].includes(tile) ? tile : '';
 }

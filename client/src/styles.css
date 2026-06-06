@@ -1124,6 +1124,22 @@ h3 {
   line-height: 1.65;
 }
 
+.guide-copy-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.guide-copy-actions button {
+  padding: 0 14px;
+}
+
+.guide-copy-actions span {
+  color: var(--text-soft);
+  font-weight: 800;
+}
+
 .guide-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

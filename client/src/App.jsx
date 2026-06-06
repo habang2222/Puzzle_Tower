@@ -7,6 +7,7 @@ import {
   BarChart3,
   BookOpen,
   Code2,
+  Copy,
   Crown,
   Download,
   DoorOpen,
@@ -1847,7 +1848,156 @@ function TagList({ tags }) {
   );
 }
 
+const aiBlockPrompt = `너는 Puzzle Tower 커스텀 블록 제작 도우미야.
+아래 규칙만 사용해서 JSON 블록 코드 하나를 만들어줘.
+
+출력은 설명 없이 JSON 객체 하나만 해줘.
+필수 필드: name, tile, color, effect, moveCost, description, message
+tile은 C~Z 한 글자만 사용하고 A, B, P, G, K, L은 쓰지 마.
+color는 #RRGGBB 형식으로 써.
+effect는 floor, wall, slow, bounce, key, lock, goal, gameover, force, oneway, push, chase 중 하나야.
+force/oneway는 outDirection을 up/down/left/right 중 하나로 넣어야 해.
+조건은 requires 또는 if[].when에 넣어.
+시간 조건은 elapsedSeconds에 { "<=": 5 }, { ">": 3 } 같은 부등호 객체로 써.
+블록 생성/변경은 spawn 또는 change 배열을 써.
+블록 이동은 moveBlock 배열을 써. targetTile은 움직일 커스텀 블록 문자, direction은 up/down/left/right/towardPlayer/awayFromPlayer 중 하나야.
+초보자가 이해할 수 있도록 description을 자세히 써.
+
+내가 만들고 싶은 블록:
+- 여기에 원하는 규칙을 한국어로 적을게.`;
+
+const blockGuideCopyText = `Puzzle Tower 커스텀 블록 코드 전체 설명서
+
+기본 구조:
+{
+  "name": "블록 이름",
+  "tile": "C",
+  "color": "#38bdf8",
+  "effect": "floor",
+  "moveCost": 1,
+  "description": "플레이어가 이 블록 위에 있을 때 보이는 설명입니다.",
+  "message": "밟았을 때 뜨는 메시지입니다."
+}
+
+필드:
+- name: 블록 이름
+- tile: C~Z 한 글자. A/B/P/G/K/L은 예약됨
+- color: #RRGGBB 색상
+- effect: 블록 동작
+- moveCost: 이동 횟수 소모량, 1~9
+- description: 블록 위에 서 있을 때 보이는 설명
+- message: 밟았을 때 뜨는 메시지
+- failMessage: 조건 실패 메시지
+- exitFailMessage: force/oneway 출구가 막혔을 때 메시지
+- image: 이미지 업로드로 들어가는 data URL
+
+effect:
+- floor: 일반 발판
+- wall: 벽
+- slow: 이동 횟수를 더 쓰는 발판
+- bounce: 원래 자리로 튕김
+- key: 열쇠 획득
+- lock: 열쇠로 여는 잠금
+- goal: 클리어
+- gameover: 실패
+- force: outDirection 방향으로 한 칸 더 밀림
+- oneway: outDirection 방향으로 빠져나감
+- push: 플레이어가 밀 수 있는 블록
+- chase: 플레이어 쪽으로 따라오는 위험 블록
+
+방향:
+up, down, left, right, towardPlayer, awayFromPlayer
+
+조건 requires 예시:
+{
+  "requires": {
+    "hasKey": true,
+    "direction": "up",
+    "movesRemainingAtLeast": 2,
+    "elapsedSeconds": { "<=": 5 }
+  }
+}
+
+if 예시:
+{
+  "if": [
+    {
+      "when": { "hasKey": true },
+      "effect": "goal",
+      "message": "열쇠가 있어서 클리어됩니다."
+    }
+  ]
+}
+
+spawn/change:
+- tile: 새 타일
+- row, col: 1부터 세는 좌표
+- targetTile: 맵에 있는 특정 타일을 전부 바꿈
+- relative: current/up/down/left/right
+- distance: relative 거리
+- afterSeconds: 몇 초 뒤 실행
+
+moveBlock:
+- targetTile: 움직일 커스텀 블록 문자
+- direction: up/down/left/right/towardPlayer/awayFromPlayer
+- distance: 한 번에 움직일 칸 수, 1~5
+- limit 또는 count: 최대 몇 개 움직일지, 1~12
+
+밀 수 있는 상자:
+{
+  "name": "밀 수 있는 상자",
+  "tile": "C",
+  "color": "#f59e0b",
+  "effect": "push",
+  "moveCost": 1,
+  "description": "플레이어가 이 블록을 향해 움직이면 상자가 같은 방향으로 한 칸 밀립니다. 뒤가 막혀 있으면 밀 수 없습니다.",
+  "message": "상자를 한 칸 밀었습니다."
+}
+
+추적 블록:
+{
+  "name": "추적 감시자",
+  "tile": "D",
+  "color": "#ef4444",
+  "effect": "chase",
+  "moveCost": 1,
+  "description": "플레이어가 한 번 움직일 때마다 이 블록도 플레이어 쪽으로 한 칸 따라옵니다. 닿으면 게임오버입니다.",
+  "message": "추적 블록에 닿았습니다. 게임오버!"
+}
+
+자석 발판:
+{
+  "name": "자석 발판",
+  "tile": "H",
+  "color": "#38bdf8",
+  "effect": "floor",
+  "moveCost": 1,
+  "description": "이 발판을 밟으면 맵에 있는 C 블록이 플레이어 방향으로 한 칸 움직입니다.",
+  "message": "자석이 C 블록을 끌어당겼습니다.",
+  "moveBlock": [
+    {
+      "targetTile": "C",
+      "direction": "towardPlayer",
+      "distance": 1,
+      "limit": 4
+    }
+  ]
+}
+
+AI에게 줄 요청문:
+${aiBlockPrompt}`;
+
 function BlockGuide({ onClose }) {
+  const [copyMessage, setCopyMessage] = useState('');
+  const copyGuide = async () => {
+    try {
+      await navigator.clipboard.writeText(blockGuideCopyText);
+      setCopyMessage('전체 설명을 복사했습니다.');
+    } catch (error) {
+      setCopyMessage('브라우저가 복사를 막았습니다. 내용을 직접 선택해서 복사하세요.');
+    }
+  };
+
   return (
     <div className="block-guide-overlay" role="dialog" aria-modal="true" aria-label="커스텀 블록 코드 설명서">
       <div className="block-guide-dialog">
@@ -1870,6 +2020,13 @@ function BlockGuide({ onClose }) {
             <li>팔레트에서 그 블록을 고르고 보드 칸을 누르면 맵에 배치됩니다.</li>
             <li>업로드를 누르면 다른 플레이어도 그 규칙이 들어간 맵을 플레이할 수 있습니다.</li>
           </ol>
+          <div className="guide-copy-actions">
+            <button className="primary" onClick={copyGuide} type="button">
+              <Copy size={17} />
+              <span>전체 설명 복사</span>
+            </button>
+            {copyMessage && <span>{copyMessage}</span>}
+          </div>
         </div>
 
         <div className="guide-grid">
@@ -1935,19 +2092,25 @@ function BlockGuide({ onClose }) {
               <div><strong>gameover</strong><span>밟으면 즉시 실패 화면으로 이동</span></div>
               <div><strong>force</strong><span>밟으면 outDirection 방향으로 한 칸 더 밀어냄</span></div>
               <div><strong>oneway</strong><span>조건을 맞추면 outDirection 방향으로만 빠져나감</span></div>
+              <div><strong>push</strong><span>플레이어가 밀면 같은 방향으로 한 칸 움직이는 블록</span></div>
+              <div><strong>chase</strong><span>플레이어가 움직일 때마다 플레이어 쪽으로 따라오는 위험 블록</span></div>
             </div>
           </section>
 
           <section>
             <h3>방향 쓰는 법</h3>
-            <p>방향은 영어 소문자로 씁니다. 방향이 필요한 효과는 force, oneway입니다.</p>
+            <p>방향은 영어로 씁니다. force/oneway는 네 방향만 쓰고, moveBlock은 플레이어 기준 방향도 쓸 수 있습니다.</p>
             <pre>{`"outDirection": "up"
 
 쓸 수 있는 방향:
 up    = 위
 down  = 아래
 left  = 왼쪽
-right = 오른쪽`}</pre>
+right = 오른쪽
+
+moveBlock에서 추가로 가능:
+towardPlayer   = 플레이어 쪽
+awayFromPlayer = 플레이어 반대쪽`}</pre>
           </section>
 
           <section>
@@ -2034,6 +2197,34 @@ right = 오른쪽`}</pre>
           </section>
 
           <section>
+            <h3>moveBlock 명령</h3>
+            <p>moveBlock은 이미 맵에 놓인 커스텀 블록을 움직입니다. 움직일 위치가 빈 칸일 때만 이동합니다.</p>
+            <div className="guide-table compact">
+              <div><strong>targetTile</strong><span>움직일 커스텀 블록 문자입니다. 예: "C"</span></div>
+              <div><strong>direction</strong><span>up, down, left, right, towardPlayer, awayFromPlayer</span></div>
+              <div><strong>distance</strong><span>한 번에 몇 칸 움직일지 씁니다. 1~5</span></div>
+              <div><strong>limit</strong><span>최대 몇 개까지 움직일지 씁니다. 1~12</span></div>
+            </div>
+            <pre>{`{
+  "name": "자석 발판",
+  "tile": "H",
+  "color": "#38bdf8",
+  "effect": "floor",
+  "moveCost": 1,
+  "description": "이 발판을 밟으면 C 블록이 플레이어 쪽으로 한 칸 움직입니다.",
+  "message": "자석이 C 블록을 끌어당겼습니다.",
+  "moveBlock": [
+    {
+      "targetTile": "C",
+      "direction": "towardPlayer",
+      "distance": 1,
+      "limit": 4
+    }
+  ]
+}`}</pre>
+          </section>
+
+          <section>
             <h3>시간 조건과 부등호</h3>
             <p>elapsedSeconds는 시작 후 지난 시간입니다. 부등호는 큰따옴표 안에 씁니다.</p>
             <pre>{`{
@@ -2097,6 +2288,35 @@ right = 오른쪽`}</pre>
   "outDirection": "right",
   "message": "바람이 오른쪽으로 밀었습니다.",
   "exitFailMessage": "오른쪽이 막혀 이동하지 못했습니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>복붙 예시: 밀 수 있는 블록</h3>
+            <p>플레이어가 이 블록 방향으로 움직이면, 블록이 같은 방향으로 한 칸 밀립니다. 뒤가 빈 칸이어야 합니다.</p>
+            <pre>{`{
+  "name": "밀 수 있는 상자",
+  "tile": "C",
+  "color": "#f59e0b",
+  "effect": "push",
+  "moveCost": 1,
+  "description": "플레이어가 이 블록을 향해 움직이면 상자가 같은 방향으로 한 칸 밀립니다. 뒤가 막혀 있으면 밀 수 없습니다.",
+  "message": "상자를 한 칸 밀었습니다.",
+  "failMessage": "상자 뒤가 막혀서 밀 수 없습니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>복붙 예시: 플레이어 추적 블록</h3>
+            <p>플레이어가 움직일 때마다 이 블록도 플레이어 쪽으로 한 칸 움직입니다. 닿으면 실패합니다.</p>
+            <pre>{`{
+  "name": "추적 감시자",
+  "tile": "D",
+  "color": "#ef4444",
+  "effect": "chase",
+  "moveCost": 1,
+  "description": "플레이어가 한 번 움직일 때마다 이 블록도 플레이어 쪽으로 한 칸 따라옵니다. 닿으면 게임오버입니다.",
+  "message": "추적 블록에 닿았습니다. 게임오버!"
 }`}</pre>
           </section>
 
@@ -2221,6 +2441,12 @@ right = 오른쪽`}</pre>
           </section>
 
           <section>
+            <h3>AI에게 시키는 문장</h3>
+            <p>아래 문장을 AI에게 붙여넣고, 마지막 줄에 원하는 블록을 한국어로 적으면 됩니다. 위의 전체 설명 복사 버튼에도 이 문장이 포함됩니다.</p>
+            <pre>{aiBlockPrompt}</pre>
+          </section>
+
+          <section>
             <h3>자주 나는 오류</h3>
             <ul className="guide-list">
               <li>쉼표가 빠지면 저장이 안 됩니다. 각 줄 끝의 쉼표를 확인하세요.</li>
@@ -2313,6 +2539,7 @@ function normalizeCustomBlock(block) {
   const requires = normalizeBlockCondition(code.requires || code.require || block.requires || block.require || null);
   const rules = normalizeBlockRules(code.if || code.rules || block.if || block.rules || []);
   const spawn = normalizeBlockSpawns(code.spawn || code.spawns || code.change || code.changes || block.spawn || block.spawns || block.change || block.changes || []);
+  const moveBlock = normalizeBlockMoves(code.moveBlock || code.moveBlocks || code.move || code.moves || block.moveBlock || block.moveBlocks || block.move || block.moves || []);
   const tags = parseTags(code.tags || block.tags || []);
   const description = String(code.description || code.tooltip || block.description || block.tooltip || '').slice(0, 160);
   return {
@@ -2336,6 +2563,7 @@ function normalizeCustomBlock(block) {
     giveKey: code.giveKey === true || block.giveKey === true,
     takeKey: code.takeKey === true || block.takeKey === true,
     spawn,
+    moveBlock,
     rules,
     isPublic: block.isPublic ?? (block.is_public === undefined ? true : block.is_public !== 0),
     downloads: block.downloads || 0,
@@ -2357,6 +2585,7 @@ function normalizeCustomBlock(block) {
       giveKey: code.giveKey === true || block.giveKey === true,
       takeKey: code.takeKey === true || block.takeKey === true,
       spawn,
+      moveBlock,
       if: rules
     }
   };
@@ -2364,7 +2593,7 @@ function normalizeCustomBlock(block) {
 
 function parseBlockDraft(draft) {
   const parsed = safeJsonParse(draft, null);
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover', 'push', 'chase']);
   const reservedTiles = new Set(['.', '#', 'P', 'G', 'K', 'L', 'A', 'B']);
 
   if (!parsed || typeof parsed !== 'object') {
@@ -2380,7 +2609,7 @@ function parseBlockDraft(draft) {
     return { ok: false, message: 'name이 필요합니다.' };
   }
   if (!allowedEffects.has(block.effect)) {
-    return { ok: false, message: 'effect는 slow, wall, bounce, goal, key, lock, floor, force, oneway, gameover 중 하나여야 합니다.' };
+    return { ok: false, message: 'effect는 slow, wall, bounce, goal, key, lock, floor, force, oneway, gameover, push, chase 중 하나여야 합니다.' };
   }
   if ((block.effect === 'force' || block.effect === 'oneway') && !block.outDirection) {
     return { ok: false, message: 'force/oneway 효과에는 outDirection이 필요합니다.' };
@@ -2403,6 +2632,11 @@ function parseBlockDraft(draft) {
   const spawnValidation = validateBlockSpawns(parsed.spawn || parsed.spawns || parsed.change || parsed.changes || []);
   if (!spawnValidation.ok) {
     return spawnValidation;
+  }
+
+  const moveValidation = validateBlockMoves(parsed.moveBlock || parsed.moveBlocks || parsed.move || parsed.moves || []);
+  if (!moveValidation.ok) {
+    return moveValidation;
   }
 
   const rulesValidation = validateBlockRules(parsed.if || parsed.rules || []);
@@ -2447,7 +2681,11 @@ function getUsedCustomBlocks(board, customBlocks) {
 function getSpawnTiles(block) {
   return [
     ...(block.spawn || []),
-    ...(block.rules || []).flatMap((rule) => rule.spawn || [])
+    ...(block.moveBlock || []).map((move) => ({ tile: move.targetTile })),
+    ...(block.rules || []).flatMap((rule) => [
+      ...(rule.spawn || []),
+      ...(rule.moveBlock || []).map((move) => ({ tile: move.targetTile }))
+    ])
   ].map((spawn) => spawn.tile).filter(Boolean);
 }
 
@@ -2573,6 +2811,7 @@ function normalizeBlockRules(rules) {
     .slice(0, 8)
     .map((rule) => {
       const spawn = normalizeBlockSpawns(rule.spawn || rule.spawns || rule.change || rule.changes || []);
+      const moveBlock = normalizeBlockMoves(rule.moveBlock || rule.moveBlocks || rule.move || rule.moves || []);
       return {
         when: normalizeBlockCondition(rule.when || rule.condition || {}),
         ...(rule.effect === undefined ? {} : { effect: String(rule.effect).toLowerCase() }),
@@ -2584,7 +2823,8 @@ function normalizeBlockRules(rules) {
         ...(rule.consumeOnUse === undefined ? {} : { consumeOnUse: rule.consumeOnUse === true }),
         ...(rule.giveKey === undefined ? {} : { giveKey: rule.giveKey === true }),
         ...(rule.takeKey === undefined ? {} : { takeKey: rule.takeKey === true }),
-        ...(spawn.length ? { spawn } : {})
+        ...(spawn.length ? { spawn } : {}),
+        ...(moveBlock.length ? { moveBlock } : {})
       };
     });
 }
@@ -2616,6 +2856,32 @@ function normalizeBlockSpawns(spawn) {
         ...(relative ? { relative } : {}),
         ...(Number.isFinite(distance) ? { distance: Math.max(1, Math.min(Math.round(distance), 9)) } : {}),
         ...(Number.isFinite(afterSeconds) ? { afterSeconds: Math.max(0, Math.min(Math.round(afterSeconds), 99)) } : {})
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeBlockMoves(moves) {
+  const items = Array.isArray(moves) ? moves : moves ? [moves] : [];
+
+  return items
+    .filter((item) => item && typeof item === 'object')
+    .slice(0, 12)
+    .map((item) => {
+      const targetTile = normalizeMoveTargetTile(item.targetTile || item.tile || item.from);
+      const direction = normalizeMoveDirectionValue(item.direction || item.to || item.moveDirection || 'towardPlayer');
+      const distance = Number(item.distance);
+      const limit = Number(item.limit ?? item.count);
+
+      if (!targetTile || !direction) {
+        return null;
+      }
+
+      return {
+        targetTile,
+        direction,
+        distance: Number.isFinite(distance) ? Math.max(1, Math.min(Math.round(distance), 5)) : 1,
+        limit: Number.isFinite(limit) ? Math.max(1, Math.min(Math.round(limit), 12)) : 12
       };
     })
     .filter(Boolean);
@@ -2714,7 +2980,7 @@ function validateBlockRules(rules) {
     return { ok: false, message: 'if는 배열이어야 합니다.' };
   }
 
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover', 'push', 'chase']);
 
   for (const rule of rules) {
     if (!rule || typeof rule !== 'object') {
@@ -2738,6 +3004,10 @@ function validateBlockRules(rules) {
     const spawnValidation = validateBlockSpawns(rule.spawn || rule.spawns || rule.change || rule.changes || []);
     if (!spawnValidation.ok) {
       return spawnValidation;
+    }
+    const moveValidation = validateBlockMoves(rule.moveBlock || rule.moveBlocks || rule.move || rule.moves || []);
+    if (!moveValidation.ok) {
+      return moveValidation;
     }
   }
 
@@ -2787,9 +3057,49 @@ function validateBlockSpawns(spawn) {
   return { ok: true };
 }
 
+function validateBlockMoves(moves) {
+  const items = Array.isArray(moves) ? moves : moves ? [moves] : [];
+  if (items.length > 12) {
+    return { ok: false, message: 'moveBlock은 최대 12개까지만 넣을 수 있습니다.' };
+  }
+
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, message: 'moveBlock 항목은 JSON 객체여야 합니다.' };
+    }
+
+    if (!normalizeMoveTargetTile(item.targetTile || item.tile || item.from)) {
+      return { ok: false, message: 'moveBlock의 targetTile은 C~Z 커스텀 블록 한 글자여야 합니다.' };
+    }
+    if (!normalizeMoveDirectionValue(item.direction || item.to || item.moveDirection || 'towardPlayer')) {
+      return { ok: false, message: 'moveBlock의 direction은 up, down, left, right, towardPlayer, awayFromPlayer 중 하나여야 합니다.' };
+    }
+    if (item.distance !== undefined && (!Number.isFinite(Number(item.distance)) || Number(item.distance) < 1 || Number(item.distance) > 5)) {
+      return { ok: false, message: 'moveBlock의 distance는 1~5 사이 숫자여야 합니다.' };
+    }
+    if ((item.limit !== undefined || item.count !== undefined) && (!Number.isFinite(Number(item.limit ?? item.count)) || Number(item.limit ?? item.count) < 1 || Number(item.limit ?? item.count) > 12)) {
+      return { ok: false, message: 'moveBlock의 limit/count는 1~12 사이 숫자여야 합니다.' };
+    }
+  }
+
+  return { ok: true };
+}
+
 function normalizeDirectionValue(value) {
   const direction = String(value || '').toLowerCase();
   return ['up', 'down', 'left', 'right'].includes(direction) ? direction : '';
+}
+
+function normalizeMoveDirectionValue(value) {
+  const raw = String(value || '').trim();
+  const compact = raw.toLowerCase().replace(/[\s_-]/g, '');
+  if (compact === 'player' || compact === 'towardplayer' || compact === 'toplayer') {
+    return 'towardPlayer';
+  }
+  if (compact === 'awayplayer' || compact === 'awayfromplayer' || compact === 'fromplayer') {
+    return 'awayFromPlayer';
+  }
+  return normalizeDirectionValue(raw);
 }
 
 function normalizeSpawnTile(value) {
@@ -2798,6 +3108,11 @@ function normalizeSpawnTile(value) {
     return tile;
   }
   return '';
+}
+
+function normalizeMoveTargetTile(value) {
+  const tile = String(value || '').trim().slice(0, 1).toUpperCase();
+  return /^[C-Z]$/.test(tile) && !['P', 'G', 'K', 'L', 'A', 'B'].includes(tile) ? tile : '';
 }
 
 function isValidBlockImage(image) {
@@ -2930,7 +3245,7 @@ function isPathPassable(game, point) {
   if (!block) {
     return true;
   }
-  if (block.effect === 'wall' || block.effect === 'gameover') {
+  if (block.effect === 'wall' || block.effect === 'gameover' || block.effect === 'chase') {
     return false;
   }
   if (block.effect === 'lock' && !game.hasKey) {
@@ -3003,7 +3318,9 @@ function createBlockSummary(block) {
     lock: '열쇠가 있어야 지나갈 수 있는 잠금 블록입니다.',
     force: `${directionLabel(block.outDirection)} 방향으로 한 칸 더 밀어내는 블록입니다.`,
     oneway: `${directionLabel(block.outDirection)} 방향으로만 빠져나갈 수 있는 블록입니다.`,
-    gameover: '밟으면 즉시 실패하는 위험 블록입니다.'
+    gameover: '밟으면 즉시 실패하는 위험 블록입니다.',
+    push: '플레이어가 밀면 한 칸 움직이는 블록입니다.',
+    chase: '플레이어가 움직일 때마다 플레이어 쪽으로 따라오는 위험 블록입니다.'
   };
   return effectLabels[block.effect] || '커스텀 규칙이 적용된 블록입니다.';
 }
@@ -3019,7 +3336,9 @@ function formatBlockEffect(block) {
     lock: '잠금',
     force: `강제 이동 ${directionLabel(block.outDirection)}`,
     oneway: `일방통행 ${directionLabel(block.outDirection)}`,
-    gameover: '게임오버'
+    gameover: '게임오버',
+    push: '밀기',
+    chase: '추적'
   };
   return labels[block.effect] || block.effect;
 }
@@ -3035,6 +3354,9 @@ function createBlockRuleSummary(block) {
   if (block.spawn?.length) {
     const delayed = block.spawn.some((item) => Number(item.afterSeconds || 0) > 0);
     parts.push(delayed ? '시간 후 변화' : '블록 변화');
+  }
+  if (block.moveBlock?.length) {
+    parts.push('블록 이동');
   }
   if (block.giveKey) {
     parts.push('열쇠 지급');

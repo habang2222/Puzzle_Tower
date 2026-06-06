@@ -1130,7 +1130,7 @@ function normalizeCustomBlocks(blocks) {
 
   const usedTiles = new Set();
   const normalized = [];
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover', 'push', 'chase']);
   const reservedTiles = new Set(['.', '#', 'P', 'G', 'K', 'L', 'A', 'B']);
 
   for (const rawBlock of blocks.slice(0, 12)) {
@@ -1154,6 +1154,7 @@ function normalizeCustomBlocks(blocks) {
     const requires = normalizeCondition(code.requires || code.require || rawBlock?.requires || rawBlock?.require || null);
     const rules = normalizeRules(code.if || code.rules || rawBlock?.if || rawBlock?.rules || []);
     const spawn = normalizeSpawns(code.spawn || code.spawns || code.change || code.changes || rawBlock?.spawn || rawBlock?.spawns || rawBlock?.change || rawBlock?.changes || []);
+    const moveBlock = normalizeMoves(code.moveBlock || code.moveBlocks || code.move || code.moves || rawBlock?.moveBlock || rawBlock?.moveBlocks || rawBlock?.move || rawBlock?.moves || []);
     const consumeOnUse = code.consumeOnUse === true || rawBlock?.consumeOnUse === true;
     const giveKey = code.giveKey === true || rawBlock?.giveKey === true;
     const takeKey = code.takeKey === true || rawBlock?.takeKey === true;
@@ -1189,6 +1190,9 @@ function normalizeCustomBlocks(blocks) {
     if (!spawn.ok) {
       return { ok: false, message: spawn.message };
     }
+    if (!moveBlock.ok) {
+      return { ok: false, message: moveBlock.message };
+    }
 
     usedTiles.add(tile);
     const codeData = {
@@ -1209,6 +1213,7 @@ function normalizeCustomBlocks(blocks) {
       giveKey,
       takeKey,
       spawn: spawn.items,
+      moveBlock: moveBlock.items,
       if: rules.rules
     };
     normalized.push({
@@ -1229,6 +1234,7 @@ function normalizeCustomBlocks(blocks) {
       giveKey,
       takeKey,
       spawn: spawn.items,
+      moveBlock: moveBlock.items,
       rules: rules.rules,
       isPublic,
       code: codeData
@@ -1244,7 +1250,7 @@ function normalizeRules(rules) {
   }
 
   const normalized = [];
-  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover']);
+  const allowedEffects = new Set(['slow', 'wall', 'bounce', 'goal', 'key', 'lock', 'floor', 'force', 'oneway', 'gameover', 'push', 'chase']);
 
   for (const rule of rules.slice(0, 8)) {
     if (!rule || typeof rule !== 'object') {
@@ -1259,6 +1265,7 @@ function normalizeRules(rules) {
     const effect = rule.effect === undefined ? undefined : String(rule.effect).trim().toLowerCase();
     const outDirection = normalizeDirection(rule.outDirection || rule.exitDirection || '');
     const spawn = normalizeSpawns(rule.spawn || rule.spawns || rule.change || rule.changes || []);
+    const moveBlock = normalizeMoves(rule.moveBlock || rule.moveBlocks || rule.move || rule.moves || []);
 
     if (effect !== undefined && !allowedEffects.has(effect)) {
       return { ok: false, message: 'if 규칙에 지원하지 않는 효과가 있습니다.' };
@@ -1268,6 +1275,9 @@ function normalizeRules(rules) {
     }
     if (!spawn.ok) {
       return { ok: false, message: spawn.message };
+    }
+    if (!moveBlock.ok) {
+      return { ok: false, message: moveBlock.message };
     }
 
     normalized.push({
@@ -1281,7 +1291,8 @@ function normalizeRules(rules) {
       ...(rule.consumeOnUse === undefined ? {} : { consumeOnUse: rule.consumeOnUse === true }),
       ...(rule.giveKey === undefined ? {} : { giveKey: rule.giveKey === true }),
       ...(rule.takeKey === undefined ? {} : { takeKey: rule.takeKey === true }),
-      ...(spawn.items.length ? { spawn: spawn.items } : {})
+      ...(spawn.items.length ? { spawn: spawn.items } : {}),
+      ...(moveBlock.items.length ? { moveBlock: moveBlock.items } : {})
     });
   }
 
@@ -1335,6 +1346,47 @@ function normalizeSpawns(spawn) {
       ...(relative ? { relative } : {}),
       distance,
       afterSeconds
+    });
+  }
+
+  return { ok: true, items: normalized };
+}
+
+function normalizeMoves(moves) {
+  const items = Array.isArray(moves) ? moves : moves ? [moves] : [];
+  if (items.length > 12) {
+    return { ok: false, message: 'moveBlock은 최대 12개까지만 넣을 수 있습니다.' };
+  }
+
+  const normalized = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, message: 'moveBlock 항목은 객체여야 합니다.' };
+    }
+
+    const targetTile = normalizeMoveTargetTile(item.targetTile || item.tile || item.from);
+    const direction = normalizeMoveDirection(item.direction || item.to || item.moveDirection || 'towardPlayer');
+    const distance = Number(item.distance ?? 1);
+    const limit = Number(item.limit ?? item.count ?? 12);
+
+    if (!targetTile) {
+      return { ok: false, message: 'moveBlock의 targetTile은 C~Z 커스텀 블록 한 글자여야 합니다.' };
+    }
+    if (!direction) {
+      return { ok: false, message: 'moveBlock의 direction은 up, down, left, right, towardPlayer, awayFromPlayer 중 하나여야 합니다.' };
+    }
+    if (!Number.isFinite(distance) || distance < 1 || distance > 5) {
+      return { ok: false, message: 'moveBlock의 distance는 1~5 사이 숫자여야 합니다.' };
+    }
+    if (!Number.isFinite(limit) || limit < 1 || limit > 12) {
+      return { ok: false, message: 'moveBlock의 limit/count는 1~12 사이 숫자여야 합니다.' };
+    }
+
+    normalized.push({
+      targetTile,
+      direction,
+      distance: Math.round(distance),
+      limit: Math.round(limit)
     });
   }
 
@@ -1420,12 +1472,29 @@ function normalizeDirection(value) {
   return ['up', 'down', 'left', 'right'].includes(direction) ? direction : '';
 }
 
+function normalizeMoveDirection(value) {
+  const raw = String(value || '').trim();
+  const compact = raw.toLowerCase().replace(/[\s_-]/g, '');
+  if (compact === 'player' || compact === 'towardplayer' || compact === 'toplayer') {
+    return 'towardPlayer';
+  }
+  if (compact === 'awayplayer' || compact === 'awayfromplayer' || compact === 'fromplayer') {
+    return 'awayFromPlayer';
+  }
+  return normalizeDirection(raw);
+}
+
 function normalizeSpawnTile(value) {
   const tile = String(value || '').trim().slice(0, 1).toUpperCase();
   if (tile !== 'P' && (tile === '.' || tile === '#' || ['G', 'K', 'L'].includes(tile) || /^[C-Z]$/.test(tile))) {
     return tile;
   }
   return '';
+}
+
+function normalizeMoveTargetTile(value) {
+  const tile = String(value || '').trim().slice(0, 1).toUpperCase();
+  return /^[C-Z]$/.test(tile) && !['P', 'G', 'K', 'L', 'A', 'B'].includes(tile) ? tile : '';
 }
 
 function normalizeBlockImage(value) {
