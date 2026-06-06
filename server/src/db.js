@@ -28,6 +28,28 @@ export async function initDatabase() {
   persist();
 }
 
+export function getStorageInfo() {
+  const configuredDataDir = String(process.env.PUZZLE_TOWER_DATA_DIR || process.env.DATA_DIR || '').trim();
+  const isRender = Boolean(process.env.RENDER || process.env.RENDER_SERVICE_ID || process.env.RENDER_EXTERNAL_URL);
+  const usesVarData = path.resolve(dataDir).startsWith(path.resolve('/var/data'));
+  const warning = isRender;
+  const message = isRender
+    ? usesVarData
+      ? 'Render에서는 /var/data Persistent Disk가 서비스에 실제로 연결되어 있어야 계정, 비밀번호, 맵, 블록 데이터가 유지됩니다. Free 인스턴스만 쓰면 재배포 때 SQLite 데이터가 사라질 수 있습니다.'
+      : 'Render 서버에서 영구 저장 위치가 설정되지 않았습니다. 계정, 비밀번호, 맵, 블록 데이터가 재배포 때 사라질 수 있습니다.'
+    : '로컬 SQLite 파일에 저장 중입니다. 서버 data 폴더를 지우지 않으면 데이터가 유지됩니다.';
+
+  return {
+    driver: 'sqlite',
+    dataDir,
+    configuredDataDir: configuredDataDir || null,
+    render: isRender,
+    usesVarData,
+    warning,
+    message
+  };
+}
+
 export function all(sql, params = []) {
   const statement = db.prepare(sql);
   statement.bind(params);

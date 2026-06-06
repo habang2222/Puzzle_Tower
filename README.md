@@ -80,6 +80,12 @@ ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-this-admin-password
 JWT_SECRET=replace-this-with-a-long-random-value
 PASSWORD_RESET_EXPOSE_CODE=false
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-gmail-app-password
+SMTP_FROM=Puzzle Tower <your-email@gmail.com>
 PUZZLE_TOWER_DATA_DIR=./data
 ```
 
@@ -87,7 +93,7 @@ PUZZLE_TOWER_DATA_DIR=./data
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 If environment variables are not available, open the in-app Admin screen, enter the admin setup token, Admin email, and Admin password, then press "Admin 로그인 설정".
 The admin setup token is `ADMIN_TOKEN`, not the Admin login password. If `ADMIN_TOKEN` is not set on the server, the current fallback token is `admin123`.
-Password reset codes are stored hashed and expire after 15 minutes. Without an email provider, local/dev runs return the reset code for testing. On production, set `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
+Password reset codes are stored hashed and expire after 15 minutes. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` to send reset codes by email. For Gmail, use a Google App Password, not the normal Gmail password. Without an email provider, local/dev runs return the reset code for testing. On production, set `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
 
 ## API List
 
@@ -95,6 +101,7 @@ Password reset codes are stored hashed and expire after 15 minutes. Without an e
 
 ```http
 GET /api/health
+GET /api/storage/status
 ```
 
 ### Stages
@@ -121,7 +128,8 @@ GET /api/auth/me
 {
   "nickname": "maker",
   "email": "maker@example.com",
-  "password": "secret123"
+  "password": "secret123",
+  "confirmPassword": "secret123"
 }
 ```
 
@@ -333,6 +341,7 @@ Use `render.yaml` as a starting point, or create a Render Web Service manually:
 - Build command: `npm install`
 - Start command: `npm start`
 - Environment variables: `ADMIN_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`, `CLIENT_ORIGIN`, `CLIENT_URL`
+- Password reset email variables: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
 - Optional data directory: `PUZZLE_TOWER_DATA_DIR=/var/data`
 - Optional classroom reset demo: `PASSWORD_RESET_EXPOSE_CODE=true`
 
@@ -353,6 +362,8 @@ https://puzzle-tower.onrender.com/api/health
 GitHub Pages can host the frontend only. Email login, ranking save, community map upload, custom block sharing, and admin APIs need the Express backend deployed separately.
 
 The local SQLite file is created under `server/data/` unless `PUZZLE_TOWER_DATA_DIR` is set.
+
+Bug reports can be sent to `victor6580a@gmail.com`; the frontend shows this address near the bottom of the page.
 
 Nicknames are validated on the server. `admin`, case variants, admin-like one-character variants, unicode homoglyph attempts, invisible/control characters, combining zalgo characters, and UI-breaking names are rejected for normal users. The reserved display name `Admin` is created internally for official Admin-authored content.
 

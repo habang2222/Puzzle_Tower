@@ -3,8 +3,9 @@ import bcrypt from 'bcryptjs';
 import cors from 'cors';
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import nodemailer from 'nodemailer';
 import { randomInt } from 'node:crypto';
-import { all, get, initDatabase, insert, run } from './db.js';
+import { all, get, getStorageInfo, initDatabase, insert, run } from './db.js';
 import { createNicknameKey, parseTags, sanitizeDisplayText, validateNicknameInput } from './nickname.js';
 
 const app = express();
@@ -24,10 +25,15 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+app.get('/api/storage/status', (req, res) => {
+  res.json(getStorageInfo());
+});
+
 app.post('/api/auth/register', async (req, res) => {
   const nicknameValidation = validateNicknameInput(req.body?.nickname);
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
+  const confirmPassword = String(req.body?.confirmPassword || '');
 
   if (!nicknameValidation.ok) {
     res.status(400).json({ message: nicknameValidation.message });
@@ -36,6 +42,11 @@ app.post('/api/auth/register', async (req, res) => {
 
   if (!isEmail(email) || password.length < 6) {
     res.status(400).json({ message: '닉네임, 이메일, 6자 이상 비밀번호가 필요합니다.' });
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    res.status(400).json({ message: '비밀번호 확인이 일치하지 않습니다.' });
     return;
   }
 
@@ -127,10 +138,15 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
     [user.id, tokenHash]
   );
 
+  const emailSent = await sendPasswordResetEmail(email, resetCode);
   const response = { message: genericMessage };
-  if (process.env.NODE_ENV !== 'production' || process.env.PASSWORD_RESET_EXPOSE_CODE === 'true') {
+  if (emailSent) {
+    response.message = '비밀번호 재설정 코드를 이메일로 보냈습니다. 15분 안에 사용하세요.';
+  } else if (process.env.NODE_ENV !== 'production' || process.env.PASSWORD_RESET_EXPOSE_CODE === 'true') {
     response.resetCode = resetCode;
-    response.message = '개발/제출용 재설정 코드가 발급되었습니다. 15분 안에 사용하세요.';
+    response.message = '메일 서버가 없어 화면에 재설정 코드를 표시합니다. 15분 안에 사용하세요.';
+  } else {
+    response.message = '메일 서버 설정이 없어 재설정 코드를 보낼 수 없습니다. Render 환경변수 SMTP_HOST, SMTP_USER, SMTP_PASS를 설정하세요.';
   }
   res.json(response);
 });
@@ -1445,6 +1461,40 @@ function normalizeVisionRadius(value) {
     return '';
   }
   return clamp(radius, 1, 10);
+}
+
+async function sendPasswordResetEmail(email, resetCode) {
+  const host = String(process.env.SMTP_HOST || '').trim();
+  const user = String(process.env.SMTP_USER || '').trim();
+  const pass = String(process.env.SMTP_PASS || '').trim();
+
+  if (!host || !user || !pass) {
+    return false;
+  }
+
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secure =
+    String(process.env.SMTP_SECURE || '').trim().toLowerCase() === 'true' ||
+    port === 465;
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass }
+    });
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || user,
+      to: email,
+      subject: 'Puzzle Tower 비밀번호 재설정 코드',
+      text: `Puzzle Tower 비밀번호 재설정 코드: ${resetCode}\n\n이 코드는 15분 뒤 만료됩니다. 본인이 요청하지 않았다면 이 메일을 무시하세요.`
+    });
+    return true;
+  } catch (error) {
+    console.warn('Password reset email failed:', error.message);
+    return false;
+  }
 }
 
 function isEmail(value) {

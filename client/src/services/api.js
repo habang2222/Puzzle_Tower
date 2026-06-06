@@ -23,6 +23,10 @@ export async function fetchHealth() {
   return request('/api/health');
 }
 
+export async function fetchStorageStatus() {
+  return request('/api/storage/status');
+}
+
 export async function fetchStages(filters = {}) {
   try {
     return await request(withQuery('/api/stages', filters));

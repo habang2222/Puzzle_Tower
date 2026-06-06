@@ -17,6 +17,7 @@ import {
   ListRestart,
   Lock,
   LogIn,
+  Mail,
   Map as MapIcon,
   Pencil,
   Play,
@@ -48,6 +49,7 @@ import {
   fetchMyBlocks,
   fetchPublicBlocks,
   fetchRankings,
+  fetchStorageStatus,
   fetchStages,
   getAuthToken,
   loginUser,
@@ -104,9 +106,10 @@ export default function App() {
   const [nickname, setNickname] = useState(() => localStorage.getItem(nicknameKey) || 'player');
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login');
-  const [authForm, setAuthForm] = useState({ nickname: '', email: '', password: '', resetCode: '' });
+  const [authForm, setAuthForm] = useState({ nickname: '', email: '', password: '', confirmPassword: '', resetCode: '' });
   const [passwordResetStep, setPasswordResetStep] = useState('request');
   const [authMessage, setAuthMessage] = useState('');
+  const [storageStatus, setStorageStatus] = useState(null);
   const [stages, setStages] = useState(fallbackStages.map((stage) => ({ ...stage, isOfficial: true })));
   const [selectedStage, setSelectedStage] = useState({ ...fallbackStages[0], isOfficial: true });
   const [game, setGame] = useState(() => createInitialGame({ ...fallbackStages[0], isOfficial: true }));
@@ -182,14 +185,25 @@ export default function App() {
     let mounted = true;
 
     fetchHealth()
-      .then(() => {
+      .then(async () => {
         if (mounted) {
           setApiOnline(true);
+        }
+        try {
+          const status = await fetchStorageStatus();
+          if (mounted) {
+            setStorageStatus(status);
+          }
+        } catch (error) {
+          if (mounted) {
+            setStorageStatus(null);
+          }
         }
       })
       .catch(() => {
         if (mounted) {
           setApiOnline(false);
+          setStorageStatus(null);
         }
       });
 
@@ -322,6 +336,10 @@ export default function App() {
     }
 
     const onKeyDown = (event) => {
+      if (game.status !== 'playing') {
+        return;
+      }
+
       const keyMap = {
         ArrowUp: 'up',
         ArrowDown: 'down',
@@ -342,7 +360,28 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleMove, view]);
+  }, [game.status, handleMove, view]);
+
+  useEffect(() => {
+    if (view !== 'game' || game.status === 'playing') {
+      return undefined;
+    }
+
+    const onKeyDown = (event) => {
+      if (event.key !== 'Enter') {
+        return;
+      }
+      event.preventDefault();
+      if (game.status === 'cleared') {
+        goNextStage();
+      } else {
+        restartStage();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [game.status, goNextStage, restartStage, view]);
 
   const loadRankings = useCallback(() => {
     fetchRankings(rankingStageId)
@@ -529,6 +568,11 @@ export default function App() {
         setAuthMode('login');
         setPasswordResetStep('request');
         setAuthForm((current) => ({ ...current, password: '', resetCode: '' }));
+        return;
+      }
+
+      if (authMode === 'signup' && authForm.password !== authForm.confirmPassword) {
+        setAuthMessage('비밀번호 확인이 일치하지 않습니다.');
         return;
       }
 
@@ -867,6 +911,8 @@ export default function App() {
         </nav>
       </header>
 
+      {storageStatus?.warning && <StorageNotice status={storageStatus} />}
+
       <main>
         {view === 'home' && (
           <section className="home-layout">
@@ -996,6 +1042,18 @@ export default function App() {
                       onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))}
                       type="password"
                       value={authForm.password}
+                    />
+                  </>
+                )}
+                {authMode === 'signup' && (
+                  <>
+                    <label htmlFor="auth-password-confirm">비밀번호 확인</label>
+                    <input
+                      id="auth-password-confirm"
+                      minLength={6}
+                      onChange={(event) => setAuthForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+                      type="password"
+                      value={authForm.confirmPassword}
                     />
                   </>
                 )}
@@ -1567,9 +1625,31 @@ export default function App() {
           </section>
         )}
       </main>
+      <BugReportLink />
       <AdSlot />
       {blockGuideOpen && <BlockGuide onClose={() => setBlockGuideOpen(false)} />}
     </div>
+  );
+}
+
+function StorageNotice({ status }) {
+  return (
+    <aside className="storage-notice" aria-label="저장소 상태">
+      <strong>저장소 확인 필요</strong>
+      <span>{status.message}</span>
+    </aside>
+  );
+}
+
+function BugReportLink() {
+  return (
+    <aside className="bug-report" aria-label="버그 신고">
+      <Mail size={18} />
+      <span>버그 신고:</span>
+      <a href="mailto:victor6580a@gmail.com?subject=Puzzle%20Tower%20%EB%B2%84%EA%B7%B8%20%EC%8B%A0%EA%B3%A0">
+        victor6580a@gmail.com
+      </a>
+    </aside>
   );
 }
 
