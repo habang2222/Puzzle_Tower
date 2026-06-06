@@ -868,7 +868,6 @@ export default function App() {
       </header>
 
       <main>
-        <AdSlot />
         {view === 'home' && (
           <section className="home-layout">
             <div className="intro-panel">
@@ -1568,6 +1567,7 @@ export default function App() {
           </section>
         )}
       </main>
+      <AdSlot />
       {blockGuideOpen && <BlockGuide onClose={() => setBlockGuideOpen(false)} />}
     </div>
   );

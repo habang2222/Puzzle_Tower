@@ -105,7 +105,7 @@ textarea {
 }
 
 .app-shell {
-  width: min(1180px, calc(100% - 28px));
+  width: min(1760px, calc(100% - 32px));
   margin: 0 auto;
   padding: 18px 0 40px;
 }
@@ -700,7 +700,7 @@ h3 {
   display: block;
   width: min(100%, 970px);
   min-height: 96px;
-  margin: 0 auto 18px;
+  margin: 28px auto 0;
   overflow: hidden;
   border: 1px solid rgba(66, 232, 242, 0.18);
   border-radius: 8px;
@@ -772,7 +772,10 @@ h3 {
 
 .builder-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 330px) minmax(0, 1fr) minmax(260px, 330px);
+  grid-template-areas:
+    "controls board maps"
+    "controls blocks blocks";
+  grid-template-columns: clamp(300px, 22vw, 420px) minmax(420px, 1.1fr) minmax(340px, 0.9fr);
   align-items: start;
   gap: 16px;
 }
@@ -783,6 +786,7 @@ h3 {
 }
 
 .builder-panel {
+  grid-area: controls;
   position: sticky;
   top: 92px;
   max-height: calc(100vh - 112px);
@@ -792,7 +796,7 @@ h3 {
 
 .builder-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
   gap: 10px;
 }
 
@@ -803,7 +807,7 @@ h3 {
 
 .palette-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 8px;
 }
 
@@ -826,6 +830,7 @@ h3 {
 }
 
 .builder-board-wrap {
+  grid-area: board;
   display: grid;
   justify-items: center;
   width: 100%;
@@ -857,6 +862,10 @@ h3 {
 .my-map-list {
   display: grid;
   gap: 10px;
+}
+
+.my-map-panel {
+  grid-area: maps;
 }
 
 .my-map-item {
@@ -894,8 +903,9 @@ h3 {
 
 .block-panel {
   display: grid;
-  grid-column: 1 / -1;
+  grid-area: blocks;
   gap: 12px;
+  min-width: 0;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -911,6 +921,8 @@ h3 {
 }
 
 .block-code {
+  width: 100%;
+  max-width: 100%;
   min-height: 190px;
 }
 
@@ -1197,6 +1209,16 @@ h3 {
   color: var(--green);
 }
 
+@media (max-width: 1180px) {
+  .builder-grid {
+    grid-template-areas:
+      "controls board"
+      "controls maps"
+      "blocks blocks";
+    grid-template-columns: clamp(280px, 34vw, 360px) minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 860px) {
   .topbar,
   .section-heading {
@@ -1217,6 +1239,14 @@ h3 {
   .admin-grid,
   .builder-grid {
     grid-template-columns: 1fr;
+  }
+
+  .builder-grid {
+    grid-template-areas:
+      "controls"
+      "board"
+      "maps"
+      "blocks";
   }
 
   .search-panel,
