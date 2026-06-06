@@ -3220,13 +3220,13 @@ function chooseBetterRecord(previous, next) {
   if (!previous) {
     return next;
   }
-  if (next.score > previous.score) {
+  if (next.clearTime < previous.clearTime) {
     return next;
   }
-  if (next.score === previous.score && next.clearTime < previous.clearTime) {
+  if (next.clearTime === previous.clearTime && next.moveUsed < previous.moveUsed) {
     return next;
   }
-  return previous;
+  return next.clearTime === previous.clearTime && next.moveUsed === previous.moveUsed && next.score > previous.score ? next : previous;
 }
 
 function getElapsedFromTimer(startTime) {

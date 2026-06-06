@@ -628,7 +628,7 @@ app.get('/api/rankings', async (req, res) => {
     JOIN users u ON u.id = r.user_id
     JOIN stages s ON s.id = r.stage_id
     ${filter}
-    ORDER BY r.score DESC, r.clear_time ASC, r.move_used ASC
+    ORDER BY r.clear_time ASC, r.move_used ASC, r.score DESC
     LIMIT ?
     `,
     params
@@ -653,7 +653,7 @@ app.get('/api/users/:nickname/best', async (req, res) => {
     JOIN users u ON u.id = r.user_id
     JOIN stages s ON s.id = r.stage_id
     WHERE u.nickname_key = ?
-    ORDER BY s.level ASC, r.score DESC, r.clear_time ASC
+    ORDER BY s.level ASC, r.clear_time ASC, r.move_used ASC, r.score DESC
     `,
     [nicknameKey]
   );
@@ -1079,13 +1079,13 @@ function isBetterRecord(next, previous) {
   if (!previous) {
     return true;
   }
-  if (next.score !== previous.score) {
-    return next.score > previous.score;
-  }
   if (next.clear_time !== previous.clear_time) {
     return next.clear_time < previous.clear_time;
   }
-  return next.move_used < previous.move_used;
+  if (next.move_used !== previous.move_used) {
+    return next.move_used < previous.move_used;
+  }
+  return next.score > previous.score;
 }
 
 function validateRecordProof(proof, { stage, stageId, clearTime, moveUsed }) {

@@ -401,6 +401,7 @@ async function ensureUniqueIndexes() {
   await createIndex('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL');
   await createIndex('CREATE UNIQUE INDEX IF NOT EXISTS idx_records_user_stage ON records(user_id, stage_id)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_records_ranking ON records(stage_id, score DESC, clear_time ASC, move_used ASC)');
+  await createIndex('CREATE INDEX IF NOT EXISTS idx_records_fastest ON records(stage_id, clear_time ASC, move_used ASC, score DESC)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at)');
 }
 
