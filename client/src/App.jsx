@@ -52,6 +52,7 @@ import {
   deleteCustomBlock,
   deleteStage,
   downloadCustomBlock,
+  fetchCommunityStages,
   fetchHealth,
   fetchMe,
   fetchMyStages,
@@ -146,6 +147,9 @@ export default function App() {
   const [selectedTile, setSelectedTile] = useState('#');
   const [builderMessage, setBuilderMessage] = useState('');
   const [stageSearch, setStageSearch] = useState({ q: '', creator: '', tag: '', sort: 'recent' });
+  const [communityStages, setCommunityStages] = useState([]);
+  const [communitySearch, setCommunitySearch] = useState({ q: '', creator: '', tag: '', sort: 'recent' });
+  const [communityMessage, setCommunityMessage] = useState('');
   const [blockSearch, setBlockSearch] = useState({ q: '', creator: '', tag: '' });
   const [myStages, setMyStages] = useState([]);
   const [customBlocks, setCustomBlocks] = useState(() => loadLocalBlocks());
@@ -565,7 +569,7 @@ export default function App() {
       const normalized = normalizeCustomBlock(downloaded);
       mergeCustomBlocks([normalized]);
       setSelectedTile(normalized.tile);
-    setBlockMessage('블록을 내 제작 팔레트에 추가했습니다.');
+      setBlockMessage('블록을 내 제작 팔레트에 추가했습니다.');
     } catch (error) {
       setBlockMessage(error.message);
     }
@@ -579,6 +583,20 @@ export default function App() {
       setStages(shouldUseDefaultSort ? normalized.sort(sortStages) : normalized);
       setApiOnline(true);
     } catch (error) {
+      setApiOnline(false);
+    }
+  };
+
+  const loadCommunityStages = async (filters = communitySearch) => {
+    try {
+      setCommunityMessage('커뮤니티 맵을 불러오는 중입니다.');
+      const loadedStages = await fetchCommunityStages(filters);
+      setCommunityStages(loadedStages.map(normalizeStage));
+      setCommunityMessage('');
+      setApiOnline(true);
+    } catch (error) {
+      setCommunityStages([]);
+      setCommunityMessage(error.message);
       setApiOnline(false);
     }
   };
@@ -599,6 +617,7 @@ export default function App() {
     );
 
     setStages((current) => current.map(applyStats));
+    setCommunityStages((current) => current.map(applyStats));
     setMyStages((current) => current.map(applyStats));
     setSelectedStage((current) => applyStats(current));
     setCommunityPanelStage((current) => (current ? applyStats(current) : current));
@@ -1116,6 +1135,17 @@ export default function App() {
             <DoorOpen size={18} />
             <span>스테이지</span>
           </button>
+          <button
+            className={view === 'community' ? 'active' : ''}
+            onClick={() => {
+              setView('community');
+              loadCommunityStages();
+            }}
+            type="button"
+          >
+            <MessageSquare size={18} />
+            <span>커뮤니티</span>
+          </button>
           <button className={view === 'builder' ? 'active' : ''} onClick={() => setView('builder')} type="button">
             <Hammer size={18} />
             <span>제작</span>
@@ -1420,6 +1450,151 @@ export default function App() {
                           <span>내 맵 수정</span>
                         </button>
                       )
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+            {communityPanelStage && (
+              <CommunityStagePanel
+                comments={stageComments}
+                draft={commentDraft}
+                message={commentMessage}
+                onClose={() => {
+                  setCommunityPanelStage(null);
+                  setStageComments([]);
+                  setCommentDraft('');
+                  setCommentMessage('');
+                }}
+                onDraftChange={setCommentDraft}
+                onLike={() => submitStageReaction(communityPanelStage, 'like')}
+                onDislike={() => submitStageReaction(communityPanelStage, 'dislike')}
+                onReport={submitCommentReport}
+                onSubmit={submitStageComment}
+                stage={communityPanelStage}
+                user={user}
+              />
+            )}
+          </section>
+        )}
+
+        {view === 'community' && (
+          <section className="screen-section">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">COMMUNITY MAPS</p>
+                <h2>커뮤니티</h2>
+              </div>
+              <div className="hero-actions">
+                <button onClick={() => loadCommunityStages()} type="button">
+                  <ListRestart size={17} />
+                  <span>새로고침</span>
+                </button>
+                <StatusPill online={apiOnline} />
+              </div>
+            </div>
+            <div className="search-panel">
+              <input
+                aria-label="커뮤니티 맵 이름 검색"
+                onKeyDown={(event) => runOnEnter(event, loadCommunityStages)}
+                onChange={(event) => setCommunitySearch((current) => ({ ...current, q: event.target.value }))}
+                placeholder="맵 이름/난이도 검색"
+                value={communitySearch.q}
+              />
+              <input
+                aria-label="커뮤니티 제작자 검색"
+                onKeyDown={(event) => runOnEnter(event, loadCommunityStages)}
+                onChange={(event) => setCommunitySearch((current) => ({ ...current, creator: event.target.value }))}
+                placeholder="제작자 검색"
+                value={communitySearch.creator}
+              />
+              <input
+                aria-label="커뮤니티 태그 검색"
+                onKeyDown={(event) => runOnEnter(event, loadCommunityStages)}
+                onChange={(event) => setCommunitySearch((current) => ({ ...current, tag: event.target.value }))}
+                placeholder="태그 검색"
+                value={communitySearch.tag}
+              />
+              <select
+                aria-label="커뮤니티 맵 정렬"
+                onChange={(event) => setCommunitySearch((current) => ({ ...current, sort: event.target.value }))}
+                value={communitySearch.sort}
+              >
+                <option value="recent">최신순</option>
+                <option value="likes">좋아요 많은 순</option>
+                <option value="dislikes">싫어요 많은 순</option>
+                <option value="comments">댓글 많은 순</option>
+                <option value="plays">플레이 많은 순</option>
+              </select>
+              <button onClick={() => loadCommunityStages()} type="button">
+                <ListRestart size={17} />
+                <span>검색</span>
+              </button>
+              <button
+                onClick={() => {
+                  const reset = { q: '', creator: '', tag: '', sort: 'recent' };
+                  setCommunitySearch(reset);
+                  loadCommunityStages(reset);
+                }}
+                type="button"
+              >
+                <Eraser size={17} />
+                <span>초기화</span>
+              </button>
+            </div>
+            <p className="result-count">커뮤니티 맵 {communityStages.length}개</p>
+            {communityMessage && <p className="admin-message">{communityMessage}</p>}
+            <div className="stage-grid">
+              {communityStages.length === 0 ? (
+                <div className="empty-state">
+                  <MessageSquare size={28} />
+                  <p>아직 불러온 커뮤니티 맵이 없습니다. 새로고침을 눌러보세요.</p>
+                </div>
+              ) : communityStages.map((stage) => (
+                <article className="stage-card community" key={stage.id}>
+                  <div className="stage-card-header">
+                    <span>COMMUNITY</span>
+                    <strong>{stage.difficulty}</strong>
+                  </div>
+                  <h3>{stage.title}</h3>
+                  {stage.showcaseImage && (
+                    <img className="stage-showcase-image" alt={`${stage.title} 자랑 이미지`} src={stage.showcaseImage} />
+                  )}
+                  <MiniBoard stage={stage} compact />
+                  <div className="stage-meta">
+                    <span>{stage.moveLimit} moves</span>
+                    <span>{stage.board.length} x {stage.board[0]?.length || 0}</span>
+                  </div>
+                  {stage.tags?.length > 0 && <TagList tags={stage.tags} />}
+                  {stage.creatorNickname && <p className="stage-author">제작자: {stage.creatorNickname}</p>}
+                  <div className="stage-social-stats" aria-label="커뮤니티 반응">
+                    <span><ThumbsUp size={14} /> {stage.likeCount || 0}</span>
+                    <span><ThumbsDown size={14} /> {stage.dislikeCount || 0}</span>
+                    <span><MessageSquare size={14} /> {stage.commentCount || 0}</span>
+                    <span><Play size={14} /> {stage.playCount || 0}</span>
+                  </div>
+                  <div className="stage-card-actions">
+                    <button className="primary" onClick={() => startStage(stage)} type="button">
+                      <Play size={16} />
+                      <span>플레이</span>
+                    </button>
+                    <button className={stage.reaction === 'like' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'like')} type="button">
+                      <ThumbsUp size={16} />
+                      <span>좋아요</span>
+                    </button>
+                    <button className={stage.reaction === 'dislike' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'dislike')} type="button">
+                      <ThumbsDown size={16} />
+                      <span>싫어요</span>
+                    </button>
+                    <button onClick={() => openCommunityPanel(stage)} type="button">
+                      <MessageSquare size={16} />
+                      <span>댓글</span>
+                    </button>
+                    {user?.id === stage.creatorId && (
+                      <button onClick={() => loadBuilderFromStage(stage)} type="button">
+                        <Pencil size={16} />
+                        <span>내 맵 수정</span>
+                      </button>
                     )}
                   </div>
                 </article>
