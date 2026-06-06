@@ -336,7 +336,7 @@ Frontend URL format:
 https://habang2222.github.io/Puzzle_Tower/
 ```
 
-The frontend falls back to `https://puzzle-tower.onrender.com` on deployed pages. If the backend is moved to Railway, set the GitHub Pages build variable `VITE_API_URL` to the Railway public backend URL.
+The frontend falls back to `https://puzzletower-production.up.railway.app` on deployed pages. You can override it with the GitHub Pages build variable `VITE_API_URL`.
 
 ### Backend: Render
 
@@ -361,7 +361,7 @@ Important persistence note:
 Backend API URL format:
 
 ```text
-https://puzzle-tower.onrender.com/api/health
+https://puzzletower-production.up.railway.app/api/health
 ```
 
 ### Backend: Railway

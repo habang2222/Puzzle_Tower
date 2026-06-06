@@ -1,11 +1,20 @@
 import { fallbackStages } from '../data/stages.js';
 
-const deployedApiBaseUrl = 'https://puzzle-tower.onrender.com';
+const deployedApiBaseUrl = 'https://puzzletower-production.up.railway.app';
 const localApiBaseUrl = 'http://localhost:4000';
 const isLocalFrontend =
   typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
-const API_BASE_URL = import.meta.env.VITE_API_URL || (isLocalFrontend ? localApiBaseUrl : deployedApiBaseUrl);
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL || (isLocalFrontend ? localApiBaseUrl : deployedApiBaseUrl));
 const authTokenKey = 'puzzle-tower-auth-token';
+
+function normalizeApiBaseUrl(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return withProtocol.replace(/\/+$/, '');
+}
 
 export function getAuthToken() {
   return localStorage.getItem(authTokenKey) || '';
