@@ -103,6 +103,34 @@ export async function fetchCommunityStages(filters = {}) {
   return request(withQuery('/api/community/stages', filters));
 }
 
+export async function reactToStage(stageId, reaction) {
+  return request(`/api/community/stages/${stageId}/reaction`, {
+    method: 'POST',
+    auth: true,
+    body: JSON.stringify({ reaction })
+  });
+}
+
+export async function fetchStageComments(stageId) {
+  return request(`/api/community/stages/${stageId}/comments`);
+}
+
+export async function createStageComment(stageId, body) {
+  return request(`/api/community/stages/${stageId}/comments`, {
+    method: 'POST',
+    auth: true,
+    body: JSON.stringify({ body })
+  });
+}
+
+export async function reportComment(commentId, reason) {
+  return request(`/api/comments/${commentId}/report`, {
+    method: 'POST',
+    auth: true,
+    body: JSON.stringify({ reason })
+  });
+}
+
 export async function fetchMyStages() {
   return request('/api/me/stages', {
     auth: true
@@ -186,6 +214,26 @@ export async function configureAdminLogin(payload, token) {
   return adminRequest('/api/admin/login', 'POST', payload, token);
 }
 
+export async function fetchAdminCommentReports(token) {
+  return request('/api/admin/comment-reports', {
+    headers: createAdminHeaders(token)
+  });
+}
+
+export async function deleteAdminComment(commentId, token) {
+  return request(`/api/admin/comments/${commentId}`, {
+    method: 'DELETE',
+    headers: createAdminHeaders(token)
+  });
+}
+
+export async function deleteAdminUser(userId, token) {
+  return request(`/api/admin/users/${userId}`, {
+    method: 'DELETE',
+    headers: createAdminHeaders(token)
+  });
+}
+
 function adminRequest(path, method, body, token) {
   return request(path, {
     method,
@@ -221,14 +269,27 @@ function filterFallbackStages(stages, filters = {}) {
   const q = String(filters.q || filters.search || '').trim().toLowerCase();
   const creator = String(filters.creator || filters.maker || '').trim().toLowerCase();
   const tag = String(filters.tag || filters.tags || '').trim().toLowerCase();
+  const sort = String(filters.sort || 'recent').trim().toLowerCase();
 
-  return stages.filter((stage) => {
+  const filtered = stages.filter((stage) => {
     const tags = Array.isArray(stage.tags) ? stage.tags.map((item) => String(item).toLowerCase()) : [];
     const matchesQuery = !q || [stage.title, stage.difficulty, tags.join(' ')].some((value) => String(value || '').toLowerCase().includes(q));
     const matchesCreator = !creator || String(stage.creatorNickname || '').toLowerCase().includes(creator);
     const matchesTag = !tag || tags.includes(tag);
     return matchesQuery && matchesCreator && matchesTag;
   });
+
+  if (['likes', 'dislikes', 'comments', 'plays'].includes(sort)) {
+    const keyMap = {
+      likes: 'likeCount',
+      dislikes: 'dislikeCount',
+      comments: 'commentCount',
+      plays: 'playCount'
+    };
+    return [...filtered].sort((a, b) => Number(b[keyMap[sort]] || 0) - Number(a[keyMap[sort]] || 0));
+  }
+
+  return filtered;
 }
 
 async function request(path, options = {}) {

@@ -165,6 +165,7 @@ async function migratePostgres() {
       move_limit INTEGER NOT NULL,
       difficulty TEXT NOT NULL,
       tags TEXT NOT NULL DEFAULT '[]',
+      showcase_image TEXT,
       creator_id INTEGER REFERENCES users(id),
       is_official INTEGER NOT NULL DEFAULT 1,
       is_public INTEGER NOT NULL DEFAULT 1,
@@ -208,6 +209,37 @@ async function migratePostgres() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS stage_reactions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      stage_id INTEGER NOT NULL REFERENCES stages(id),
+      reaction TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, stage_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS stage_comments (
+      id SERIAL PRIMARY KEY,
+      stage_id INTEGER NOT NULL REFERENCES stages(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      body TEXT NOT NULL,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS comment_reports (
+      id SERIAL PRIMARY KEY,
+      comment_id INTEGER NOT NULL REFERENCES stage_comments(id),
+      reporter_id INTEGER NOT NULL REFERENCES users(id),
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(comment_id, reporter_id)
+    );
   `);
 
   await addPostgresColumnIfMissing('users', 'email', 'TEXT');
@@ -215,6 +247,7 @@ async function migratePostgres() {
   await addPostgresColumnIfMissing('users', 'password_hash', 'TEXT');
   await addPostgresColumnIfMissing('users', 'provider', "TEXT NOT NULL DEFAULT 'local'");
   await addPostgresColumnIfMissing('stages', 'tags', "TEXT NOT NULL DEFAULT '[]'");
+  await addPostgresColumnIfMissing('stages', 'showcase_image', 'TEXT');
   await addPostgresColumnIfMissing('stages', 'creator_id', 'INTEGER REFERENCES users(id)');
   await addPostgresColumnIfMissing('stages', 'is_official', 'INTEGER NOT NULL DEFAULT 1');
   await addPostgresColumnIfMissing('stages', 'is_public', 'INTEGER NOT NULL DEFAULT 1');
@@ -244,6 +277,7 @@ function migrateSqlite() {
       move_limit INTEGER NOT NULL,
       difficulty TEXT NOT NULL,
       tags TEXT NOT NULL DEFAULT '[]',
+      showcase_image TEXT,
       creator_id INTEGER,
       is_official INTEGER NOT NULL DEFAULT 1,
       is_public INTEGER NOT NULL DEFAULT 1,
@@ -292,6 +326,43 @@ function migrateSqlite() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS stage_reactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      stage_id INTEGER NOT NULL,
+      reaction TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, stage_id),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (stage_id) REFERENCES stages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS stage_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      stage_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      body TEXT NOT NULL,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (stage_id) REFERENCES stages(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS comment_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      comment_id INTEGER NOT NULL,
+      reporter_id INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(comment_id, reporter_id),
+      FOREIGN KEY (comment_id) REFERENCES stage_comments(id),
+      FOREIGN KEY (reporter_id) REFERENCES users(id)
+    );
   `);
 
   addSqliteColumnIfMissing('users', 'email', 'TEXT');
@@ -299,6 +370,7 @@ function migrateSqlite() {
   addSqliteColumnIfMissing('users', 'password_hash', 'TEXT');
   addSqliteColumnIfMissing('users', 'provider', "TEXT NOT NULL DEFAULT 'local'");
   addSqliteColumnIfMissing('stages', 'tags', "TEXT NOT NULL DEFAULT '[]'");
+  addSqliteColumnIfMissing('stages', 'showcase_image', 'TEXT');
   addSqliteColumnIfMissing('stages', 'creator_id', 'INTEGER');
   addSqliteColumnIfMissing('stages', 'is_official', 'INTEGER NOT NULL DEFAULT 1');
   addSqliteColumnIfMissing('stages', 'is_public', 'INTEGER NOT NULL DEFAULT 1');
@@ -402,6 +474,9 @@ async function ensureUniqueIndexes() {
   await createIndex('CREATE UNIQUE INDEX IF NOT EXISTS idx_records_user_stage ON records(user_id, stage_id)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_records_ranking ON records(stage_id, score DESC, clear_time ASC, move_used ASC)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_records_fastest ON records(stage_id, clear_time ASC, move_used ASC, score DESC)');
+  await createIndex('CREATE INDEX IF NOT EXISTS idx_stage_reactions_stage ON stage_reactions(stage_id, reaction)');
+  await createIndex('CREATE INDEX IF NOT EXISTS idx_stage_comments_stage ON stage_comments(stage_id, is_deleted, created_at DESC)');
+  await createIndex('CREATE INDEX IF NOT EXISTS idx_comment_reports_status ON comment_reports(status, created_at DESC)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at)');
 }
 

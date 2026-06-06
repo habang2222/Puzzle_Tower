@@ -25,6 +25,9 @@ const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-me';
 const recordRateLimitWindowMs = 10000;
 const recordRateLimitMax = 8;
 const recordRateLimits = new Map();
+const maxBoardSize = 20;
+const maxStageImageLength = 260000;
+const maxCommentLength = 500;
 
 const asyncHandler = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -228,14 +231,15 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 
 app.get('/api/stages', async (req, res) => {
   const filters = createSearchFilters(req.query, 's', 'u');
+  const sort = getStageSort(req.query?.sort);
   const stages = (await all(
     `
-    SELECT s.*, u.nickname AS creator_nickname
+    SELECT s.*, u.nickname AS creator_nickname, ${stageStatsSelect('s')}
     FROM stages s
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE (s.is_official = 1 OR s.is_public = 1)
       ${filters.where}
-    ORDER BY s.is_official DESC, s.level ASC
+    ORDER BY ${sort}
     `,
     filters.params
   )).map(toStage);
@@ -245,7 +249,7 @@ app.get('/api/stages', async (req, res) => {
 app.get('/api/stages/:level', async (req, res) => {
   const stage = await get(
     `
-    SELECT s.*, u.nickname AS creator_nickname
+    SELECT s.*, u.nickname AS creator_nickname, ${stageStatsSelect('s')}
     FROM stages s
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.level = ? AND (s.is_official = 1 OR s.is_public = 1)
@@ -261,19 +265,18 @@ app.get('/api/stages/:level', async (req, res) => {
 
 app.get('/api/community/stages', async (req, res) => {
   const filters = createSearchFilters(req.query, 's', 'u');
+  const sort = getCommunityStageSort(req.query?.sort);
   const stages = (await all(
     `
     SELECT
       s.*,
       u.nickname AS creator_nickname,
-      COUNT(r.id) AS play_count
+      ${stageStatsSelect('s')}
     FROM stages s
     JOIN users u ON u.id = s.creator_id
-    LEFT JOIN records r ON r.stage_id = s.id
     WHERE s.is_official = 0 AND s.is_public = 1
       ${filters.where}
-    GROUP BY s.id, u.nickname
-    ORDER BY s.created_at DESC
+    ORDER BY ${sort}
     `,
     filters.params
   )).map(toStage);
@@ -283,7 +286,7 @@ app.get('/api/community/stages', async (req, res) => {
 app.get('/api/me/stages', requireAuth, async (req, res) => {
   const stages = (await all(
     `
-    SELECT s.*, u.nickname AS creator_nickname
+    SELECT s.*, u.nickname AS creator_nickname, ${stageStatsSelect('s')}
     FROM stages s
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.creator_id = ?
@@ -440,8 +443,8 @@ app.post('/api/community/stages', requireAuth, async (req, res) => {
   const generatedLevel = (await get('SELECT COALESCE(MAX(level), 999) + 1 AS level FROM stages WHERE is_official = 0 OR level >= 1000')).level;
   const id = await insert(
     `
-    INSERT INTO stages (level, title, board_data, move_limit, difficulty, tags, creator_id, is_official, is_public, creator_clear_verified)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1)
+    INSERT INTO stages (level, title, board_data, move_limit, difficulty, tags, showcase_image, creator_id, is_official, is_public, creator_clear_verified)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 1)
     `,
     [
       generatedLevel,
@@ -450,6 +453,7 @@ app.post('/api/community/stages', requireAuth, async (req, res) => {
       payload.moveLimit,
       payload.difficulty,
       JSON.stringify(payload.tags),
+      payload.showcaseImage,
       req.user.id
     ]
   );
@@ -486,7 +490,7 @@ app.put('/api/community/stages/:id', requireAuth, async (req, res) => {
   await run(
     `
     UPDATE stages
-    SET title = ?, board_data = ?, move_limit = ?, difficulty = ?, tags = ?, is_public = ?, creator_clear_verified = 1, updated_at = CURRENT_TIMESTAMP
+    SET title = ?, board_data = ?, move_limit = ?, difficulty = ?, tags = ?, showcase_image = ?, is_public = ?, creator_clear_verified = 1, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
     `,
     [
@@ -495,6 +499,7 @@ app.put('/api/community/stages/:id', requireAuth, async (req, res) => {
       payload.moveLimit,
       payload.difficulty,
       JSON.stringify(payload.tags),
+      payload.showcaseImage,
       req.body?.isPublic === false ? 0 : 1,
       id
     ]
@@ -516,9 +521,106 @@ app.delete('/api/community/stages/:id', requireAuth, async (req, res) => {
     return;
   }
 
-  await run('DELETE FROM records WHERE stage_id = ?', [id]);
-  await run('DELETE FROM stages WHERE id = ?', [id]);
+  await deleteStageCascade(id);
   res.json({ ok: true });
+});
+
+app.post('/api/community/stages/:id/reaction', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const reaction = String(req.body?.reaction || '').trim().toLowerCase();
+  const stage = await get('SELECT id FROM stages WHERE id = ? AND (is_official = 1 OR is_public = 1)', [id]);
+
+  if (!stage) {
+    res.status(404).json({ message: '맵을 찾을 수 없습니다.' });
+    return;
+  }
+  if (!['like', 'dislike', 'none', ''].includes(reaction)) {
+    res.status(400).json({ message: 'reaction은 like, dislike, none 중 하나여야 합니다.' });
+    return;
+  }
+
+  if (!reaction || reaction === 'none') {
+    await run('DELETE FROM stage_reactions WHERE user_id = ? AND stage_id = ?', [req.user.id, id]);
+  } else {
+    const existing = await get('SELECT id FROM stage_reactions WHERE user_id = ? AND stage_id = ?', [req.user.id, id]);
+    if (existing) {
+      await run('UPDATE stage_reactions SET reaction = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [reaction, existing.id]);
+    } else {
+      await insert('INSERT INTO stage_reactions (user_id, stage_id, reaction) VALUES (?, ?, ?)', [req.user.id, id, reaction]);
+    }
+  }
+
+  res.json(await getStageStats(id, req.user.id));
+});
+
+app.get('/api/community/stages/:id/comments', async (req, res) => {
+  const id = Number(req.params.id);
+  const stage = await get('SELECT id FROM stages WHERE id = ? AND (is_official = 1 OR is_public = 1)', [id]);
+  if (!stage) {
+    res.status(404).json({ message: '맵을 찾을 수 없습니다.' });
+    return;
+  }
+
+  const comments = await all(
+    `
+    SELECT c.id, c.stage_id, c.user_id, c.body, c.created_at, c.updated_at, u.nickname AS author_nickname
+    FROM stage_comments c
+    JOIN users u ON u.id = c.user_id
+    WHERE c.stage_id = ? AND c.is_deleted = 0
+    ORDER BY c.created_at DESC
+    LIMIT 100
+    `,
+    [id]
+  );
+
+  res.json(comments.map(toComment));
+});
+
+app.post('/api/community/stages/:id/comments', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const stage = await get('SELECT id FROM stages WHERE id = ? AND (is_official = 1 OR is_public = 1)', [id]);
+  const body = sanitizeDisplayText(req.body?.body || req.body?.comment, maxCommentLength, '');
+
+  if (!stage) {
+    res.status(404).json({ message: '맵을 찾을 수 없습니다.' });
+    return;
+  }
+  if (!body) {
+    res.status(400).json({ message: '댓글 내용을 입력하세요.' });
+    return;
+  }
+
+  const idComment = await insert(
+    'INSERT INTO stage_comments (stage_id, user_id, body) VALUES (?, ?, ?)',
+    [id, req.user.id, body]
+  );
+
+  const comment = await getCommentById(idComment);
+  res.status(201).json(toComment(comment));
+});
+
+app.post('/api/comments/:id/report', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const comment = await get('SELECT * FROM stage_comments WHERE id = ? AND is_deleted = 0', [id]);
+  const reason = sanitizeDisplayText(req.body?.reason || '', 200, '부적절한 댓글');
+
+  if (!comment) {
+    res.status(404).json({ message: '댓글을 찾을 수 없습니다.' });
+    return;
+  }
+
+  const existing = await get('SELECT id FROM comment_reports WHERE comment_id = ? AND reporter_id = ?', [id, req.user.id]);
+  if (existing) {
+    await run('UPDATE comment_reports SET reason = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [reason, 'open', existing.id]);
+    res.json({ ok: true, reportId: existing.id });
+    return;
+  }
+
+  const reportId = await insert(
+    'INSERT INTO comment_reports (comment_id, reporter_id, reason) VALUES (?, ?, ?)',
+    [id, req.user.id, reason]
+  );
+  res.status(201).json({ ok: true, reportId });
 });
 
 app.post('/api/records', optionalAuth, async (req, res) => {
@@ -699,8 +801,8 @@ app.post('/api/admin/stages', requireAdmin, async (req, res) => {
     const adminId = await getAdminUserId();
     const id = await insert(
       `
-      INSERT INTO stages (level, title, board_data, move_limit, difficulty, tags, creator_id, is_official, is_public, creator_clear_verified)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
+      INSERT INTO stages (level, title, board_data, move_limit, difficulty, tags, showcase_image, creator_id, is_official, is_public, creator_clear_verified)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
       `,
       [
         payload.level,
@@ -709,6 +811,7 @@ app.post('/api/admin/stages', requireAdmin, async (req, res) => {
         payload.moveLimit,
         payload.difficulty,
         JSON.stringify(payload.tags),
+        payload.showcaseImage,
         adminId
       ]
     );
@@ -738,7 +841,7 @@ app.put('/api/admin/stages/:id', requireAdmin, async (req, res) => {
     await run(
       `
       UPDATE stages
-      SET level = ?, title = ?, board_data = ?, move_limit = ?, difficulty = ?, tags = ?, updated_at = CURRENT_TIMESTAMP
+      SET level = ?, title = ?, board_data = ?, move_limit = ?, difficulty = ?, tags = ?, showcase_image = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
       `,
       [
@@ -748,6 +851,7 @@ app.put('/api/admin/stages/:id', requireAdmin, async (req, res) => {
         payload.moveLimit,
         payload.difficulty,
         JSON.stringify(payload.tags),
+        payload.showcaseImage,
         id
       ]
     );
@@ -765,8 +869,71 @@ app.delete('/api/admin/stages/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  await run('DELETE FROM records WHERE stage_id = ?', [id]);
-  await run('DELETE FROM stages WHERE id = ?', [id]);
+  await deleteStageCascade(id);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/comment-reports', requireAdmin, async (req, res) => {
+  const reports = await all(
+    `
+    SELECT
+      cr.id,
+      cr.reason,
+      cr.status,
+      cr.created_at,
+      cr.updated_at,
+      c.id AS comment_id,
+      c.body AS comment_body,
+      c.created_at AS comment_created_at,
+      c.is_deleted AS comment_deleted,
+      author.id AS author_id,
+      author.nickname AS author_nickname,
+      reporter.id AS reporter_id,
+      reporter.nickname AS reporter_nickname,
+      s.id AS stage_id,
+      s.level,
+      s.title AS stage_title
+    FROM comment_reports cr
+    JOIN stage_comments c ON c.id = cr.comment_id
+    JOIN users author ON author.id = c.user_id
+    JOIN users reporter ON reporter.id = cr.reporter_id
+    JOIN stages s ON s.id = c.stage_id
+    ORDER BY cr.status ASC, cr.created_at DESC
+    LIMIT 200
+    `
+  );
+
+  res.json(reports.map(toCommentReport));
+});
+
+app.delete('/api/admin/comments/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const comment = await get('SELECT id FROM stage_comments WHERE id = ?', [id]);
+
+  if (!comment) {
+    res.status(404).json({ message: '댓글을 찾을 수 없습니다.' });
+    return;
+  }
+
+  await run('UPDATE stage_comments SET is_deleted = 1, body = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['[관리자에 의해 삭제된 댓글]', id]);
+  await run('UPDATE comment_reports SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE comment_id = ?', ['resolved', id]);
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const user = await get('SELECT * FROM users WHERE id = ?', [id]);
+
+  if (!user) {
+    res.status(404).json({ message: '사용자를 찾을 수 없습니다.' });
+    return;
+  }
+  if (user.provider === 'admin' || user.nickname_key === 'admin') {
+    res.status(400).json({ message: 'Admin 계정은 삭제할 수 없습니다.' });
+    return;
+  }
+
+  await deleteUserCascade(id);
   res.json({ ok: true });
 });
 
@@ -899,7 +1066,7 @@ async function getUserById(id) {
 async function getStageById(id) {
   return await get(
     `
-    SELECT s.*, u.nickname AS creator_nickname
+    SELECT s.*, u.nickname AS creator_nickname, ${stageStatsSelect('s')}
     FROM stages s
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.id = ?
@@ -1075,6 +1242,109 @@ async function getRecordById(id) {
   );
 }
 
+function stageStatsSelect(alias) {
+  return `
+    (SELECT COUNT(*) FROM records r_stats WHERE r_stats.stage_id = ${alias}.id) AS play_count,
+    (SELECT COUNT(*) FROM stage_reactions sr_like WHERE sr_like.stage_id = ${alias}.id AND sr_like.reaction = 'like') AS like_count,
+    (SELECT COUNT(*) FROM stage_reactions sr_dislike WHERE sr_dislike.stage_id = ${alias}.id AND sr_dislike.reaction = 'dislike') AS dislike_count,
+    (SELECT COUNT(*) FROM stage_comments sc_stats WHERE sc_stats.stage_id = ${alias}.id AND sc_stats.is_deleted = 0) AS comment_count
+  `;
+}
+
+function getCommunityStageSort(value) {
+  const sort = String(value || 'recent').trim().toLowerCase();
+  if (['likes', 'like', 'liked'].includes(sort)) {
+    return 'like_count DESC, dislike_count ASC, s.created_at DESC';
+  }
+  if (['dislikes', 'dislike', 'hated'].includes(sort)) {
+    return 'dislike_count DESC, like_count ASC, s.created_at DESC';
+  }
+  if (['comments', 'comment'].includes(sort)) {
+    return 'comment_count DESC, s.created_at DESC';
+  }
+  if (['plays', 'play'].includes(sort)) {
+    return 'play_count DESC, s.created_at DESC';
+  }
+  return 's.created_at DESC';
+}
+
+function getStageSort(value) {
+  const sort = String(value || 'recent').trim().toLowerCase();
+  if (['likes', 'like', 'liked', 'dislikes', 'dislike', 'hated', 'comments', 'comment', 'plays', 'play'].includes(sort)) {
+    return getCommunityStageSort(sort);
+  }
+  return 's.is_official DESC, s.level ASC';
+}
+
+async function getStageStats(stageId, userId = null) {
+  const stats = await get(
+    `
+    SELECT
+      (SELECT COUNT(*) FROM stage_reactions WHERE stage_id = ? AND reaction = 'like') AS like_count,
+      (SELECT COUNT(*) FROM stage_reactions WHERE stage_id = ? AND reaction = 'dislike') AS dislike_count,
+      (SELECT COUNT(*) FROM stage_comments WHERE stage_id = ? AND is_deleted = 0) AS comment_count,
+      (SELECT COUNT(*) FROM records WHERE stage_id = ?) AS play_count
+    `,
+    [stageId, stageId, stageId, stageId]
+  );
+  const userReaction = userId
+    ? await get('SELECT reaction FROM stage_reactions WHERE stage_id = ? AND user_id = ?', [stageId, userId])
+    : null;
+
+  return {
+    stageId,
+    likeCount: stats?.like_count || 0,
+    dislikeCount: stats?.dislike_count || 0,
+    commentCount: stats?.comment_count || 0,
+    playCount: stats?.play_count || 0,
+    reaction: userReaction?.reaction || ''
+  };
+}
+
+async function getCommentById(id) {
+  return await get(
+    `
+    SELECT c.id, c.stage_id, c.user_id, c.body, c.created_at, c.updated_at, u.nickname AS author_nickname
+    FROM stage_comments c
+    JOIN users u ON u.id = c.user_id
+    WHERE c.id = ?
+    `,
+    [id]
+  );
+}
+
+async function deleteStageCascade(stageId) {
+  const comments = await all('SELECT id FROM stage_comments WHERE stage_id = ?', [stageId]);
+  for (const comment of comments) {
+    await run('DELETE FROM comment_reports WHERE comment_id = ?', [comment.id]);
+  }
+  await run('DELETE FROM stage_comments WHERE stage_id = ?', [stageId]);
+  await run('DELETE FROM stage_reactions WHERE stage_id = ?', [stageId]);
+  await run('DELETE FROM records WHERE stage_id = ?', [stageId]);
+  await run('DELETE FROM stages WHERE id = ?', [stageId]);
+}
+
+async function deleteUserCascade(userId) {
+  const userStages = await all('SELECT id FROM stages WHERE creator_id = ? AND is_official = 0', [userId]);
+  for (const stage of userStages) {
+    await deleteStageCascade(stage.id);
+  }
+
+  const comments = await all('SELECT id FROM stage_comments WHERE user_id = ?', [userId]);
+  for (const comment of comments) {
+    await run('DELETE FROM comment_reports WHERE comment_id = ?', [comment.id]);
+  }
+
+  await run('DELETE FROM comment_reports WHERE reporter_id = ?', [userId]);
+  await run('DELETE FROM stage_comments WHERE user_id = ?', [userId]);
+  await run('DELETE FROM stage_reactions WHERE user_id = ?', [userId]);
+  await run('DELETE FROM records WHERE user_id = ?', [userId]);
+  await run('DELETE FROM password_reset_tokens WHERE user_id = ?', [userId]);
+  await run('DELETE FROM custom_blocks WHERE user_id = ?', [userId]);
+  await run('UPDATE stages SET creator_id = NULL WHERE creator_id = ? AND is_official = 1', [userId]);
+  await run('DELETE FROM users WHERE id = ?', [userId]);
+}
+
 function isBetterRecord(next, previous) {
   if (!previous) {
     return true;
@@ -1219,14 +1489,59 @@ function toStage(row) {
     moveLimit: row.move_limit,
     difficulty: row.difficulty,
     tags: safeParseJson(row.tags, []),
+    showcaseImage: row.showcase_image || '',
     creatorId: row.creator_id,
     creatorNickname: row.creator_nickname,
     isOfficial: row.is_official !== 0,
     isPublic: row.is_public !== 0,
     creatorClearVerified: row.creator_clear_verified !== 0,
     playCount: row.play_count || 0,
+    likeCount: row.like_count || 0,
+    dislikeCount: row.dislike_count || 0,
+    commentCount: row.comment_count || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function toComment(row) {
+  return {
+    id: row.id,
+    stageId: row.stage_id,
+    userId: row.user_id,
+    authorNickname: row.author_nickname,
+    body: row.body,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function toCommentReport(row) {
+  return {
+    id: row.id,
+    reason: row.reason,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    comment: {
+      id: row.comment_id,
+      body: row.comment_body,
+      createdAt: row.comment_created_at,
+      deleted: row.comment_deleted !== 0
+    },
+    author: {
+      id: row.author_id,
+      nickname: row.author_nickname
+    },
+    reporter: {
+      id: row.reporter_id,
+      nickname: row.reporter_nickname
+    },
+    stage: {
+      id: row.stage_id,
+      level: row.level,
+      title: row.stage_title
+    }
   };
 }
 
@@ -1269,6 +1584,7 @@ function validateStagePayload(body, options = {}) {
     customBlocks: customBlockValidation.blocks,
     visionRadius: normalizeVisionRadius(body?.visionRadius ?? body?.vision_radius ?? ''),
     tags,
+    showcaseImage: normalizeStageImage(body?.showcaseImage || body?.showcase_image || body?.image || ''),
     clearHash: sanitizeDisplayText(body?.clearHash, 120, ''),
     creatorClearVerified: body?.creatorClearVerified === true
   };
@@ -1282,8 +1598,8 @@ function validateStagePayload(body, options = {}) {
   if (!Number.isInteger(stage.moveLimit) || stage.moveLimit < 1 || stage.moveLimit > 99) {
     return { ok: false, message: 'moveLimit은 1~99 사이의 정수여야 합니다.' };
   }
-  if (!Array.isArray(stage.board) || stage.board.length === 0 || stage.board.length > 10) {
-    return { ok: false, message: 'board는 1~10줄 문자열 배열이어야 합니다.' };
+  if (!Array.isArray(stage.board) || stage.board.length === 0 || stage.board.length > maxBoardSize) {
+    return { ok: false, message: `board는 1~${maxBoardSize}줄 문자열 배열이어야 합니다.` };
   }
 
   const width = stage.board[0]?.length;
@@ -1291,8 +1607,11 @@ function validateStagePayload(body, options = {}) {
   const customTiles = stage.customBlocks.map((block) => block.tile).join('');
   const validTileSet = new Set(['.', '#', 'P', 'G', 'K', 'L', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', ...customTiles.split('')]);
 
-  if (!width || width > 10 || stage.board.some((row) => typeof row !== 'string' || row.length !== width)) {
-    return { ok: false, message: 'board의 모든 줄은 같은 길이여야 하며 최대 10칸까지 가능합니다.' };
+  if (!width || width > maxBoardSize || stage.board.some((row) => typeof row !== 'string' || row.length !== width)) {
+    return { ok: false, message: `board의 모든 줄은 같은 길이여야 하며 최대 ${maxBoardSize}칸까지 가능합니다.` };
+  }
+  if (stage.showcaseImage === null) {
+    return { ok: false, message: '맵 이미지는 260KB 이하의 png, jpg, webp, gif data URL만 사용할 수 있습니다.' };
   }
   if (flat.split('').some((tile) => !validTileSet.has(tile))) {
     return { ok: false, message: 'board에 사용할 수 없는 타일이 있습니다.' };
@@ -1692,6 +2011,17 @@ function normalizeBlockImage(value) {
     return '';
   }
   if (image.length > 180000) {
+    return null;
+  }
+  return /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(image) ? image : null;
+}
+
+function normalizeStageImage(value) {
+  const image = String(value || '').trim();
+  if (!image) {
+    return '';
+  }
+  if (image.length > maxStageImageLength) {
     return null;
   }
   return /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(image) ? image : null;

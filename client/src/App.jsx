@@ -12,7 +12,9 @@ import {
   Download,
   DoorOpen,
   Eraser,
+  Flag,
   Hammer,
+  MessageSquare,
   ImagePlus,
   KeyRound,
   ListRestart,
@@ -28,8 +30,11 @@ import {
   Sparkles,
   Trash2,
   Trophy,
+  ThumbsDown,
+  ThumbsUp,
   UploadCloud,
   User,
+  UserX,
   UserPlus,
   X,
   Zap
@@ -38,8 +43,11 @@ import { fallbackStages } from './data/stages.js';
 import { calculateScore, createInitialGame, movePlayer, tickGame } from './game/engine.js';
 import {
   confirmPasswordReset,
+  createStageComment,
   configureAdminLogin,
   createStage,
+  deleteAdminComment,
+  deleteAdminUser,
   deleteCommunityStage,
   deleteCustomBlock,
   deleteStage,
@@ -49,13 +57,17 @@ import {
   fetchMyStages,
   fetchMyBlocks,
   fetchPublicBlocks,
+  fetchAdminCommentReports,
+  fetchStageComments,
   fetchRankings,
   fetchStorageStatus,
   fetchStages,
   getAuthToken,
   loginUser,
   publishCommunityStage,
+  reactToStage,
   registerUser,
+  reportComment,
   requestPasswordReset,
   saveRecord,
   setAuthToken,
@@ -133,7 +145,7 @@ export default function App() {
   const [builderVerifiedHash, setBuilderVerifiedHash] = useState('');
   const [selectedTile, setSelectedTile] = useState('#');
   const [builderMessage, setBuilderMessage] = useState('');
-  const [stageSearch, setStageSearch] = useState({ q: '', creator: '', tag: '' });
+  const [stageSearch, setStageSearch] = useState({ q: '', creator: '', tag: '', sort: 'recent' });
   const [blockSearch, setBlockSearch] = useState({ q: '', creator: '', tag: '' });
   const [myStages, setMyStages] = useState([]);
   const [customBlocks, setCustomBlocks] = useState(() => loadLocalBlocks());
@@ -141,6 +153,11 @@ export default function App() {
   const [myBlocks, setMyBlocks] = useState([]);
   const [blockDraft, setBlockDraft] = useState(() => JSON.stringify(defaultBlockCode, null, 2));
   const [stageCodeDraft, setStageCodeDraft] = useState('');
+  const [communityPanelStage, setCommunityPanelStage] = useState(null);
+  const [stageComments, setStageComments] = useState([]);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [commentMessage, setCommentMessage] = useState('');
+  const [adminReports, setAdminReports] = useState([]);
   const [editingBlockId, setEditingBlockId] = useState(null);
   const [blockMessage, setBlockMessage] = useState('');
   const [blockGuideOpen, setBlockGuideOpen] = useState(false);
@@ -557,11 +574,151 @@ export default function App() {
   const loadFilteredStages = async () => {
     try {
       const loadedStages = await fetchStages(stageSearch);
-      const normalized = loadedStages.map(normalizeStage).sort(sortStages);
-      setStages(normalized);
+      const normalized = loadedStages.map(normalizeStage);
+      const shouldUseDefaultSort = !stageSearch.sort || stageSearch.sort === 'recent';
+      setStages(shouldUseDefaultSort ? normalized.sort(sortStages) : normalized);
       setApiOnline(true);
     } catch (error) {
       setApiOnline(false);
+    }
+  };
+
+  const updateStageCommunityStats = (stageId, stats) => {
+    const matchesStage = (stage) => stage && String(stage.id) === String(stageId);
+    const applyStats = (stage) => (
+      matchesStage(stage)
+        ? {
+            ...stage,
+            likeCount: stats.likeCount ?? stage.likeCount,
+            dislikeCount: stats.dislikeCount ?? stage.dislikeCount,
+            commentCount: stats.commentCount ?? stage.commentCount,
+            playCount: stats.playCount ?? stage.playCount,
+            reaction: stats.reaction ?? stage.reaction
+          }
+        : stage
+    );
+
+    setStages((current) => current.map(applyStats));
+    setMyStages((current) => current.map(applyStats));
+    setSelectedStage((current) => applyStats(current));
+    setCommunityPanelStage((current) => (current ? applyStats(current) : current));
+  };
+
+  const openCommunityPanel = async (stage) => {
+    setCommunityPanelStage(stage);
+    setCommentDraft('');
+    setCommentMessage('댓글을 불러오는 중입니다.');
+
+    try {
+      const comments = await fetchStageComments(stage.id);
+      setStageComments(comments);
+      setCommentMessage('');
+      setApiOnline(true);
+    } catch (error) {
+      setStageComments([]);
+      setCommentMessage(error.message);
+      setApiOnline(false);
+    }
+  };
+
+  const submitStageReaction = async (stage, reaction) => {
+    if (!user) {
+      setCommunityPanelStage(stage);
+      setStageComments([]);
+      setCommentMessage('좋아요와 싫어요는 로그인 후 사용할 수 있습니다.');
+      return;
+    }
+
+    try {
+      const nextReaction = stage.reaction === reaction ? 'none' : reaction;
+      const stats = await reactToStage(stage.id, nextReaction);
+      updateStageCommunityStats(stage.id, stats);
+      setCommentMessage(nextReaction === 'none' ? '반응을 취소했습니다.' : '반응을 저장했습니다.');
+      setApiOnline(true);
+    } catch (error) {
+      setCommentMessage(error.message);
+      setApiOnline(false);
+    }
+  };
+
+  const submitStageComment = async () => {
+    if (!communityPanelStage) {
+      return;
+    }
+    if (!user) {
+      setCommentMessage('댓글은 로그인 후 작성할 수 있습니다.');
+      return;
+    }
+    if (!commentDraft.trim()) {
+      setCommentMessage('댓글 내용을 입력하세요.');
+      return;
+    }
+
+    try {
+      const comment = await createStageComment(communityPanelStage.id, commentDraft);
+      setStageComments((current) => [comment, ...current]);
+      setCommentDraft('');
+      updateStageCommunityStats(communityPanelStage.id, {
+        commentCount: Number(communityPanelStage.commentCount || 0) + 1
+      });
+      setCommentMessage('댓글을 등록했습니다.');
+      setApiOnline(true);
+    } catch (error) {
+      setCommentMessage(error.message);
+      setApiOnline(false);
+    }
+  };
+
+  const submitCommentReport = async (comment) => {
+    if (!user) {
+      setCommentMessage('댓글 신고는 로그인 후 사용할 수 있습니다.');
+      return;
+    }
+
+    try {
+      await reportComment(comment.id, '부적절한 댓글');
+      setCommentMessage('신고가 접수되었습니다. 관리자가 확인할 수 있습니다.');
+      setApiOnline(true);
+    } catch (error) {
+      setCommentMessage(error.message);
+      setApiOnline(false);
+    }
+  };
+
+  const loadAdminReports = async () => {
+    try {
+      const reports = await fetchAdminCommentReports(adminToken);
+      setAdminReports(reports);
+      setAdminMessage(`신고 댓글 ${reports.length}개를 불러왔습니다.`);
+      setApiOnline(true);
+    } catch (error) {
+      setAdminMessage(error.message);
+      setApiOnline(false);
+    }
+  };
+
+  const removeReportedComment = async (report) => {
+    try {
+      await deleteAdminComment(report.comment.id, adminToken);
+      await loadAdminReports();
+      setAdminMessage('신고된 댓글을 삭제 처리했습니다.');
+    } catch (error) {
+      setAdminMessage(error.message);
+    }
+  };
+
+  const removeReportedUser = async (report) => {
+    if (!window.confirm(`${report.author.nickname} 계정과 해당 사용자의 맵/블록/댓글을 삭제할까요?`)) {
+      return;
+    }
+
+    try {
+      await deleteAdminUser(report.author.id, adminToken);
+      await loadAdminReports();
+      await refreshStages();
+      setAdminMessage('신고 댓글 작성자 계정을 삭제했습니다.');
+    } catch (error) {
+      setAdminMessage(error.message);
     }
   };
 
@@ -662,7 +819,8 @@ export default function App() {
         board: parsed.board,
         tags: parsed.tags || [],
         customBlocks: parsed.customBlocks || [],
-        visionRadius: normalizeVisionRadius(parsed.visionRadius ?? parsed.vision_radius ?? '')
+        visionRadius: normalizeVisionRadius(parsed.visionRadius ?? parsed.vision_radius ?? ''),
+        showcaseImage: parsed.showcaseImage || parsed.showcase_image || ''
       };
       const saved =
         parsed.id && stages.some((stage) => stage.id === parsed.id)
@@ -717,10 +875,26 @@ export default function App() {
     setBuilder((current) => ({ ...current, [field]: value }));
   };
 
+  const uploadBuilderImage = (file) => {
+    if (!file) {
+      return;
+    }
+    if (!/^image\/(png|jpe?g|webp|gif)$/i.test(file.type) || file.size > 180000) {
+      setBuilderMessage('맵 이미지는 png, jpg, webp, gif 파일만 가능하며 180KB 이하로 올려주세요.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setBuilderField('showcaseImage', String(reader.result || ''));
+      setBuilderMessage('맵 자랑 이미지가 추가되었습니다.');
+    };
+    reader.readAsDataURL(file);
+  };
+
   const resizeBuilder = (rows, cols) => {
     setBuilder((current) => {
-      const nextRows = clampInteger(rows, 4, 10, current.rows || 6);
-      const nextCols = clampInteger(cols, 4, 10, current.cols || 6);
+      const nextRows = clampInteger(rows, 4, 20, current.rows || 6);
+      const nextCols = clampInteger(cols, 4, 20, current.cols || 6);
       const board = Array.from({ length: nextRows }, (_, rowIndex) =>
         Array.from({ length: nextCols }, (_, colIndex) => current.board[rowIndex]?.[colIndex] || '.')
       );
@@ -764,6 +938,7 @@ export default function App() {
       difficulty: stage.difficulty,
       moveLimit: stage.moveLimit,
       tags: (stage.tags || []).join(', '),
+      showcaseImage: stage.showcaseImage || '',
       visionRadius: normalizeVisionRadius(stage.visionRadius ?? ''),
       rows: board.length,
       cols: board[0]?.length || 6,
@@ -823,18 +998,19 @@ export default function App() {
 
     const payload = createBuilderPayload(builder, customBlocks);
     const builderHash = createBuilderHash(payload);
-    const draftStage = {
-      id: `draft-${builderHash}`,
-      level: 0,
-      title: `${builder.title} 테스트`,
-      difficulty: builder.difficulty,
-      moveLimit: Number(builder.moveLimit),
-      board: payload.board,
-      customBlocks: payload.customBlocks,
-      tags: payload.tags,
-      visionRadius: payload.visionRadius,
-      creatorId: user?.id,
-      creatorNickname: user?.nickname,
+      const draftStage = {
+        id: `draft-${builderHash}`,
+        level: 0,
+        title: `${builder.title} 테스트`,
+        difficulty: builder.difficulty,
+        moveLimit: Number(builder.moveLimit),
+        board: payload.board,
+        customBlocks: payload.customBlocks,
+        tags: payload.tags,
+        showcaseImage: payload.showcaseImage,
+        visionRadius: payload.visionRadius,
+        creatorId: user?.id,
+        creatorNickname: user?.nickname,
       isOfficial: false,
       isDraft: true,
       builderHash
@@ -870,8 +1046,8 @@ export default function App() {
 
     const boardRows = Array.isArray(parsed.board) ? parsed.board.map((row) => String(row || '')) : [];
     const width = boardRows[0]?.length || 0;
-    if (boardRows.length < 4 || boardRows.length > 10 || width < 4 || width > 10 || boardRows.some((row) => row.length !== width)) {
-      setBuilderMessage('board는 4~10칸 크기의 같은 길이 문자열 배열이어야 합니다.');
+    if (boardRows.length < 4 || boardRows.length > 20 || width < 4 || width > 20 || boardRows.some((row) => row.length !== width)) {
+      setBuilderMessage('board는 4~20칸 크기의 같은 길이 문자열 배열이어야 합니다.');
       return;
     }
 
@@ -886,6 +1062,7 @@ export default function App() {
       difficulty: String(parsed.difficulty || '코드').slice(0, 20),
       moveLimit: clampInteger(parsed.moveLimit ?? parsed.move_limit, 1, 99, 12),
       tags: parseTags(parsed.tags || []).join(', '),
+      showcaseImage: parsed.showcaseImage || parsed.showcase_image || '',
       visionRadius: normalizeVisionRadius(parsed.visionRadius ?? parsed.vision_radius ?? ''),
       rows: boardRows.length,
       cols: width,
@@ -1158,13 +1335,24 @@ export default function App() {
                 placeholder="태그 검색"
                 value={stageSearch.tag}
               />
+              <select
+                aria-label="맵 정렬"
+                onChange={(event) => setStageSearch((current) => ({ ...current, sort: event.target.value }))}
+                value={stageSearch.sort}
+              >
+                <option value="recent">기본순</option>
+                <option value="likes">좋아요 많은 순</option>
+                <option value="dislikes">싫어요 많은 순</option>
+                <option value="comments">댓글 많은 순</option>
+                <option value="plays">플레이 많은 순</option>
+              </select>
               <button onClick={loadFilteredStages} type="button">
                 <ListRestart size={17} />
                 <span>검색</span>
               </button>
               <button
                 onClick={() => {
-                  setStageSearch({ q: '', creator: '', tag: '' });
+                  setStageSearch({ q: '', creator: '', tag: '', sort: 'recent' });
                   refreshStages();
                 }}
                 type="button"
@@ -1187,6 +1375,9 @@ export default function App() {
                     <strong>{stage.difficulty}</strong>
                   </div>
                   <h3>{stage.title}</h3>
+                  {stage.showcaseImage && (
+                    <img className="stage-showcase-image" alt={`${stage.title} 자랑 이미지`} src={stage.showcaseImage} />
+                  )}
                   <MiniBoard stage={stage} compact />
                   <div className="stage-meta">
                     <span>{stage.moveLimit} moves</span>
@@ -1194,10 +1385,28 @@ export default function App() {
                   </div>
                   {stage.tags?.length > 0 && <TagList tags={stage.tags} />}
                   {stage.creatorNickname && <p className="stage-author">제작자: {stage.creatorNickname}</p>}
+                  <div className="stage-social-stats" aria-label="커뮤니티 반응">
+                    <span><ThumbsUp size={14} /> {stage.likeCount || 0}</span>
+                    <span><ThumbsDown size={14} /> {stage.dislikeCount || 0}</span>
+                    <span><MessageSquare size={14} /> {stage.commentCount || 0}</span>
+                    <span><Play size={14} /> {stage.playCount || 0}</span>
+                  </div>
                   <div className="stage-card-actions">
                     <button className="primary" onClick={() => startStage(stage)} type="button">
                       <Play size={16} />
                       <span>플레이</span>
+                    </button>
+                    <button className={stage.reaction === 'like' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'like')} type="button">
+                      <ThumbsUp size={16} />
+                      <span>좋아요</span>
+                    </button>
+                    <button className={stage.reaction === 'dislike' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'dislike')} type="button">
+                      <ThumbsDown size={16} />
+                      <span>싫어요</span>
+                    </button>
+                    <button onClick={() => openCommunityPanel(stage)} type="button">
+                      <MessageSquare size={16} />
+                      <span>댓글</span>
                     </button>
                     {stage.isOfficial ? (
                       <button onClick={() => openAdminEditor(stage)} type="button">
@@ -1216,6 +1425,26 @@ export default function App() {
                 </article>
               ))}
             </div>
+            {communityPanelStage && (
+              <CommunityStagePanel
+                comments={stageComments}
+                draft={commentDraft}
+                message={commentMessage}
+                onClose={() => {
+                  setCommunityPanelStage(null);
+                  setStageComments([]);
+                  setCommentDraft('');
+                  setCommentMessage('');
+                }}
+                onDraftChange={setCommentDraft}
+                onLike={() => submitStageReaction(communityPanelStage, 'like')}
+                onDislike={() => submitStageReaction(communityPanelStage, 'dislike')}
+                onReport={submitCommentReport}
+                onSubmit={submitStageComment}
+                stage={communityPanelStage}
+                user={user}
+              />
+            )}
           </section>
         )}
 
@@ -1279,7 +1508,7 @@ export default function App() {
                       <label htmlFor="map-rows">행</label>
                       <input
                         id="map-rows"
-                        max={10}
+                        max={20}
                         min={4}
                         onChange={(event) => resizeBuilder(event.target.value, builder.cols)}
                         type="number"
@@ -1290,13 +1519,33 @@ export default function App() {
                       <label htmlFor="map-cols">열</label>
                       <input
                         id="map-cols"
-                        max={10}
+                        max={20}
                         min={4}
                         onChange={(event) => resizeBuilder(builder.rows, event.target.value)}
                         type="number"
                         value={builder.cols}
                       />
                     </div>
+                  </div>
+                  <div className="builder-image-tools">
+                    <label htmlFor="map-image">자랑 이미지</label>
+                    <input
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      id="map-image"
+                      onChange={(event) => uploadBuilderImage(event.target.files?.[0])}
+                      type="file"
+                    />
+                    {builder.showcaseImage ? (
+                      <div className="stage-image-preview">
+                        <img alt={`${builder.title} 미리보기`} src={builder.showcaseImage} />
+                        <button onClick={() => setBuilderField('showcaseImage', '')} type="button">
+                          <X size={16} />
+                          <span>이미지 제거</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="stage-author">목록에서 맵을 자랑할 이미지를 올릴 수 있습니다.</p>
+                    )}
                   </div>
                   <div className="palette-row">
                     {palette.map((item) => (
@@ -1668,6 +1917,47 @@ export default function App() {
                 </div>
                 {adminMessage && <p className="admin-message">{adminMessage}</p>}
               </div>
+              <div className="admin-report-panel">
+                <div className="block-panel-title">
+                  <div>
+                    <h3>신고 댓글 관리</h3>
+                    <p className="stage-author">신고된 댓글은 Admin 로그인 또는 관리자 토큰으로만 불러올 수 있습니다.</p>
+                  </div>
+                  <button onClick={loadAdminReports} type="button">
+                    <Flag size={17} />
+                    <span>신고 불러오기</span>
+                  </button>
+                </div>
+                {adminReports.length === 0 ? (
+                  <div className="empty-state compact">
+                    <Flag size={24} />
+                    <p>불러온 신고 댓글이 없습니다.</p>
+                  </div>
+                ) : (
+                  <div className="report-list">
+                    {adminReports.map((report) => (
+                      <article className="report-item" key={report.id}>
+                        <div className="report-main">
+                          <span className={report.status === 'open' ? 'report-status open' : 'report-status'}>{report.status}</span>
+                          <strong>{report.stage.title}</strong>
+                          <p>{report.comment.body}</p>
+                          <span>작성자: {report.author.nickname} · 신고자: {report.reporter.nickname} · 사유: {report.reason}</span>
+                        </div>
+                        <div className="report-actions">
+                          <button onClick={() => removeReportedComment(report)} type="button">
+                            <Trash2 size={16} />
+                            <span>댓글 삭제</span>
+                          </button>
+                          <button onClick={() => removeReportedUser(report)} type="button">
+                            <UserX size={16} />
+                            <span>계정 삭제</span>
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </section>
         )}
@@ -1922,6 +2212,82 @@ function TagList({ tags }) {
         <span key={tag}>#{tag}</span>
       ))}
     </div>
+  );
+}
+
+function CommunityStagePanel({
+  comments,
+  draft,
+  message,
+  onClose,
+  onDraftChange,
+  onDislike,
+  onLike,
+  onReport,
+  onSubmit,
+  stage,
+  user
+}) {
+  return (
+    <aside className="community-panel" aria-label={`${stage.title} 커뮤니티`}>
+      <div className="community-panel-header">
+        <div>
+          <p className="eyebrow">COMMUNITY</p>
+          <h3>{stage.title}</h3>
+          <span>{stage.creatorNickname ? `제작자: ${stage.creatorNickname}` : stage.isOfficial ? '공식 스테이지' : '커뮤니티 맵'}</span>
+        </div>
+        <button aria-label="커뮤니티 패널 닫기" onClick={onClose} type="button">
+          <X size={18} />
+        </button>
+      </div>
+      {stage.showcaseImage && <img className="community-showcase" alt={`${stage.title} 자랑 이미지`} src={stage.showcaseImage} />}
+      <div className="community-actions">
+        <button className={stage.reaction === 'like' ? 'active' : ''} onClick={onLike} type="button">
+          <ThumbsUp size={16} />
+          <span>좋아요 {stage.likeCount || 0}</span>
+        </button>
+        <button className={stage.reaction === 'dislike' ? 'active' : ''} onClick={onDislike} type="button">
+          <ThumbsDown size={16} />
+          <span>싫어요 {stage.dislikeCount || 0}</span>
+        </button>
+        <span>
+          <MessageSquare size={16} />
+          댓글 {stage.commentCount || comments.length || 0}
+        </span>
+      </div>
+      <div className="comment-composer">
+        <textarea
+          maxLength={500}
+          onChange={(event) => onDraftChange(event.target.value)}
+          placeholder={user ? '댓글을 입력하세요.' : '로그인 후 댓글을 쓸 수 있습니다.'}
+          value={draft}
+        />
+        <button className="primary" onClick={onSubmit} type="button">
+          <MessageSquare size={16} />
+          <span>댓글 등록</span>
+        </button>
+      </div>
+      {message && <p className="admin-message">{message}</p>}
+      <div className="comment-list">
+        {comments.length === 0 ? (
+          <p className="stage-author">아직 댓글이 없습니다.</p>
+        ) : (
+          comments.map((comment) => (
+            <article className="comment-item" key={comment.id}>
+              <div>
+                <strong>{comment.authorNickname}</strong>
+                <span>{formatDateTime(comment.createdAt)}</span>
+              </div>
+              <p>{comment.body}</p>
+              <button onClick={() => onReport(comment)} type="button">
+                <Flag size={15} />
+                <span>신고</span>
+              </button>
+            </article>
+          ))
+        )}
+      </div>
+    </aside>
   );
 }
 
@@ -2599,13 +2965,20 @@ function normalizeStage(stage) {
     board: normalizedBoard,
     customBlocks: Array.isArray(customBlockSource) ? customBlockSource.map(normalizeCustomBlock) : [],
     tags: parseTags(stage.tags || []),
+    showcaseImage: stage.showcaseImage ?? stage.showcase_image ?? '',
     visionRadius: normalizeVisionRadius(stage.visionRadius ?? stage.vision_radius ?? parsedBoardData?.visionRadius ?? ''),
     creatorId: stage.creatorId ?? stage.creator_id,
     creatorNickname: stage.creatorNickname ?? stage.creator_nickname,
     isOfficial,
     isPublic: stage.isPublic ?? (stage.is_public === undefined ? true : stage.is_public !== 0),
     creatorClearVerified: stage.creatorClearVerified ?? (stage.creator_clear_verified === undefined ? true : stage.creator_clear_verified !== 0),
-    playCount: stage.playCount ?? stage.play_count ?? 0
+    playCount: stage.playCount ?? stage.play_count ?? 0,
+    likeCount: stage.likeCount ?? stage.like_count ?? 0,
+    dislikeCount: stage.dislikeCount ?? stage.dislike_count ?? 0,
+    commentCount: stage.commentCount ?? stage.comment_count ?? 0,
+    reaction: stage.reaction || '',
+    createdAt: stage.createdAt ?? stage.created_at,
+    updatedAt: stage.updatedAt ?? stage.updated_at
   };
 }
 
@@ -2783,7 +3156,8 @@ function stageToDraft(stage) {
     tags: stage.tags || [],
     board: stage.board,
     customBlocks: stage.customBlocks || [],
-    visionRadius: normalizeVisionRadius(stage.visionRadius ?? '')
+    visionRadius: normalizeVisionRadius(stage.visionRadius ?? ''),
+    showcaseImage: stage.showcaseImage || ''
   };
 }
 
@@ -2795,6 +3169,7 @@ function createBuilderState() {
     moveLimit: 12,
     visionRadius: '',
     tags: 'community',
+    showcaseImage: '',
     rows: 6,
     cols: 6,
     board: [
@@ -2847,8 +3222,8 @@ function validateBuilder(builder) {
   if ((flat.match(/P/g) || []).length !== 1 || (flat.match(/G/g) || []).length !== 1) {
     return { ok: false, message: '시작 타일과 목표 타일은 각각 하나씩 필요합니다.' };
   }
-  if (board.length < 4 || board.length > 10 || board.some((row) => row.length < 4 || row.length > 10 || row.length !== board[0].length)) {
-    return { ok: false, message: '맵 크기는 4x4부터 10x10까지, 모든 줄 길이가 같아야 합니다.' };
+  if (board.length < 4 || board.length > 20 || board.some((row) => row.length < 4 || row.length > 20 || row.length !== board[0].length)) {
+    return { ok: false, message: '맵 크기는 4x4부터 20x20까지, 모든 줄 길이가 같아야 합니다.' };
   }
 
   return { ok: true };
@@ -2860,6 +3235,7 @@ function createBuilderPayload(builder, customBlocks) {
     difficulty: builder.difficulty,
     moveLimit: Number(builder.moveLimit),
     tags: parseTags(builder.tags),
+    showcaseImage: builder.showcaseImage || '',
     board: boardToStrings(builder.board),
     customBlocks: getUsedCustomBlocks(builder.board, customBlocks),
     visionRadius: normalizeVisionRadius(builder.visionRadius)
@@ -2919,8 +3295,8 @@ function normalizeBlockSpawns(spawn) {
       const relative = relativeValue === 'current' ? 'current' : normalizeDirectionValue(relativeValue);
       const row = Number(item.row);
       const col = Number(item.col);
-    const distance = Number(item.distance);
-    const afterSeconds = Number(item.afterSeconds ?? item.after);
+      const distance = Number(item.distance);
+      const afterSeconds = Number(item.afterSeconds ?? item.after);
 
       if (!tile) {
         return null;
@@ -3235,6 +3611,19 @@ function getElapsedFromTimer(startTime) {
 
 function formatTime(value) {
   return `${Number(value || 0).toFixed(4)}s`;
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return date.toLocaleString('ko-KR', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function runOnEnter(event, action) {
