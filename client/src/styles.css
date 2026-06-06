@@ -534,25 +534,122 @@ h3 {
   padding: 0;
 }
 
-.comment-composer {
+.chat-composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  align-items: center;
   gap: 10px;
+  padding: 10px;
+  border: 1px solid #2c3440;
+  border-radius: 8px;
+  background: #0f141b;
 }
 
-.comment-composer textarea {
-  min-height: 86px;
-  max-height: 180px;
+.chat-composer textarea {
+  min-height: 42px;
+  max-height: 118px;
+  padding: 10px 12px;
+  resize: none;
+  font-family: inherit;
 }
 
-.comment-list,
+.chat-composer button {
+  min-height: 42px;
+  padding: 0 18px;
+}
+
+.chat-log,
 .report-list {
   display: grid;
   gap: 10px;
 }
 
-.comment-item,
+.chat-log {
+  max-height: min(58vh, 520px);
+  min-height: 180px;
+  align-content: end;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #2c3440;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(66, 232, 242, 0.04), transparent 38%),
+    #0b0f14;
+  scrollbar-width: thin;
+}
+
+.chat-empty {
+  align-self: center;
+  justify-self: center;
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.chat-message {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.chat-message.mine {
+  justify-content: flex-end;
+}
+
+.chat-bubble {
+  display: grid;
+  gap: 6px;
+  width: fit-content;
+  max-width: min(72%, 620px);
+  padding: 10px 12px;
+  border: 1px solid #2c3440;
+  border-radius: 8px;
+  background: #11161d;
+}
+
+.chat-message.mine .chat-bubble {
+  border-color: rgba(66, 242, 155, 0.35);
+  background: rgba(66, 242, 155, 0.1);
+}
+
+.chat-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chat-meta strong {
+  color: #fff;
+}
+
+.chat-meta span {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.chat-bubble p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.chat-bubble button {
+  justify-self: start;
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  color: var(--text-soft);
+  background: transparent;
+  font-size: 0.78rem;
+}
+
+.chat-message.mine .chat-bubble button {
+  justify-self: end;
+}
+
+.chat-bubble button:hover {
+  transform: none;
+  color: var(--cyan);
+}
+
 .report-item {
   display: grid;
   gap: 8px;
@@ -562,35 +659,19 @@ h3 {
   background: #11161d;
 }
 
-.comment-item div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.comment-item strong,
 .report-main strong {
   color: #fff;
 }
 
-.comment-item span,
 .report-main span {
   color: var(--text-soft);
   font-size: 0.84rem;
 }
 
-.comment-item p,
 .report-main p {
   margin: 0;
   overflow-wrap: anywhere;
   line-height: 1.5;
-}
-
-.comment-item button {
-  justify-self: start;
-  min-height: 34px;
-  padding: 0 10px;
 }
 
 .mini-board {
@@ -1635,10 +1716,18 @@ h3 {
     grid-template-columns: 1fr 1fr;
   }
 
-  .comment-composer,
+  .chat-composer,
   .community-text-item,
   .report-item {
     grid-template-columns: 1fr;
+  }
+
+  .chat-bubble {
+    max-width: 88%;
+  }
+
+  .chat-composer button {
+    width: 100%;
   }
 
   .community-text-actions {

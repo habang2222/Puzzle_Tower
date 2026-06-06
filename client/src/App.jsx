@@ -2420,41 +2420,48 @@ function CommunityStagePanel({
           )}
         </span>
       </div>
-      <div className="comment-composer">
-        <textarea
-          maxLength={500}
-          onChange={(event) => onDraftChange(event.target.value)}
-          placeholder={user ? '댓글을 입력하세요.' : '로그인 후 댓글을 쓸 수 있습니다.'}
-          value={draft}
-        />
-        <button className="primary" onClick={onSubmit} type="button">
-          <MessageSquare size={16} />
-          <span>댓글 등록</span>
-        </button>
-      </div>
       {message && <p className="admin-message">{message}</p>}
-      <div className="comment-list">
+      <div className="chat-log" aria-label="댓글 채팅">
         {comments.length === 0 ? (
-          <p className="stage-author">아직 댓글이 없습니다.</p>
+          <p className="chat-empty">아직 메시지가 없습니다.</p>
         ) : (
           comments.map((comment) => (
-            <article className="comment-item" key={comment.id}>
-              <div>
-                <strong>{comment.authorNickname}</strong>
-                <span>{formatDateTime(comment.createdAt)}</span>
+            <article className={comment.userId === user?.id ? 'chat-message mine' : 'chat-message'} key={comment.id}>
+              <div className="chat-bubble">
+                <div className="chat-meta">
+                  <strong>{comment.authorNickname}</strong>
+                  <span>{formatDateTime(comment.createdAt)}</span>
+                </div>
+                <p>{comment.body}</p>
+                <button onClick={() => onReport(comment)} type="button">
+                  {textOnly ? '신고' : (
+                    <>
+                      <Flag size={15} />
+                      <span>신고</span>
+                    </>
+                  )}
+                </button>
               </div>
-              <p>{comment.body}</p>
-              <button onClick={() => onReport(comment)} type="button">
-                {textOnly ? '신고' : (
-                  <>
-                    <Flag size={15} />
-                    <span>신고</span>
-                  </>
-                )}
-              </button>
             </article>
           ))
         )}
+      </div>
+      <div className="chat-composer">
+        <textarea
+          maxLength={500}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+          placeholder={user ? '메시지를 입력하세요.' : '로그인 후 채팅할 수 있습니다.'}
+          value={draft}
+        />
+        <button className="primary" onClick={onSubmit} type="button">
+          <span>전송</span>
+        </button>
       </div>
     </aside>
   );
