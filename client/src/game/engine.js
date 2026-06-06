@@ -12,7 +12,8 @@ const directionLabels = {
 };
 
 export function parseBoard(board, customBlocks = []) {
-  const tiles = board.map((row) => row.split(''));
+  const safeBoard = Array.isArray(board) ? board : [];
+  const tiles = safeBoard.map((row) => String(row || '').split(''));
   const teleports = {};
   let player = null;
   let goal = null;
@@ -39,16 +40,20 @@ export function parseBoard(board, customBlocks = []) {
 export function createInitialGame(stage) {
   const customBlocks = normalizeCustomBlocks(stage.customBlocks || stage.blocks || []);
   const parsed = parseBoard(stage.board, customBlocks);
+  const playable = Boolean(parsed.player && parsed.goal && parsed.tiles.length);
   return {
     ...parsed,
+    player: parsed.player || { row: 0, col: 0 },
+    goal: parsed.goal || { row: 0, col: 0 },
+    validBoard: playable,
     stage,
     customBlocks,
     movesUsed: 0,
-    status: 'playing',
+    status: playable ? 'playing' : 'failed',
     hasKey: false,
     elapsedSeconds: 0,
     pendingSpawns: [],
-    message: '목표 지점까지 이동하세요.'
+    message: playable ? '목표 지점까지 이동하세요.' : '맵 데이터 오류: 시작 P와 목표 G가 필요합니다.'
   };
 }
 
@@ -205,7 +210,7 @@ export function tickGame(game, elapsedSeconds = game.elapsedSeconds || 0) {
 export function calculateScore(stage, clearTime, movesUsed) {
   const remainingMoves = Math.max(stage.moveLimit - movesUsed, 0);
   const levelWeight = Math.min(stage.level, 30);
-  return Math.max(levelWeight * 1000 + remainingMoves * 120 - clearTime * 8, levelWeight * 100);
+  return Math.max(Math.round(levelWeight * 1000 + remainingMoves * 120 - clearTime * 8), levelWeight * 100);
 }
 
 function getTile(tiles, point) {

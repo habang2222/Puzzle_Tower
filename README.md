@@ -79,6 +79,7 @@ ADMIN_TOKEN=change-this-token
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-this-admin-password
 JWT_SECRET=replace-this-with-a-long-random-value
+PASSWORD_RESET_EXPOSE_CODE=false
 PUZZLE_TOWER_DATA_DIR=./data
 ```
 
@@ -86,6 +87,7 @@ PUZZLE_TOWER_DATA_DIR=./data
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 If environment variables are not available, open the in-app Admin screen, enter the admin setup token, Admin email, and Admin password, then press "Admin 로그인 설정".
 The admin setup token is `ADMIN_TOKEN`, not the Admin login password. If `ADMIN_TOKEN` is not set on the server, the current fallback token is `admin123`.
+Password reset codes are stored hashed and expire after 15 minutes. Without an email provider, local/dev runs return the reset code for testing. On production, set `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
 
 ## API List
 
@@ -108,6 +110,8 @@ GET /api/stages/:level
 ```http
 POST /api/auth/register
 POST /api/auth/login
+POST /api/auth/password-reset/request
+POST /api/auth/password-reset/confirm
 GET /api/auth/me
 ```
 
@@ -277,6 +281,8 @@ GET /api/rankings?stageId=1&limit=10
 GET /api/users/:nickname/best
 ```
 
+Only one ranking record is kept per player per stage. A new clear updates the existing row only when it is better by score, then time, then move count.
+
 `POST /api/records` body:
 
 ```json
@@ -328,6 +334,7 @@ Use `render.yaml` as a starting point, or create a Render Web Service manually:
 - Start command: `npm start`
 - Environment variables: `ADMIN_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`, `CLIENT_ORIGIN`, `CLIENT_URL`
 - Optional data directory: `PUZZLE_TOWER_DATA_DIR=/var/data`
+- Optional classroom reset demo: `PASSWORD_RESET_EXPOSE_CODE=true`
 
 Important persistence note:
 
@@ -349,4 +356,4 @@ The local SQLite file is created under `server/data/` unless `PUZZLE_TOWER_DATA_
 
 Nicknames are validated on the server. `admin`, case variants, admin-like one-character variants, unicode homoglyph attempts, invisible/control characters, combining zalgo characters, and UI-breaking names are rejected for normal users. The reserved display name `Admin` is created internally for official Admin-authored content.
 
-AdSense may render a blank area until the site and ad slot are approved by Google AdSense.
+AdSense may render a blank area until the site and ad slot are approved by Google AdSense. `client/public/ads.txt` is included in the deployed frontend, but AdSense may still require ads.txt at the root domain or a custom domain.

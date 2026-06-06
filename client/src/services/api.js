@@ -27,7 +27,7 @@ export async function fetchStages(filters = {}) {
   try {
     return await request(withQuery('/api/stages', filters));
   } catch (error) {
-    return fallbackStages;
+    return filterFallbackStages(fallbackStages, filters);
   }
 }
 
@@ -40,6 +40,20 @@ export async function registerUser(payload) {
 
 export async function loginUser(payload) {
   return request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function requestPasswordReset(payload) {
+  return request('/api/auth/password-reset/request', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function confirmPasswordReset(payload) {
+  return request('/api/auth/password-reset/confirm', {
     method: 'POST',
     body: JSON.stringify(payload)
   });
@@ -183,6 +197,20 @@ function withQuery(path, filters = {}) {
   });
   const query = params.toString();
   return query ? `${path}?${query}` : path;
+}
+
+function filterFallbackStages(stages, filters = {}) {
+  const q = String(filters.q || filters.search || '').trim().toLowerCase();
+  const creator = String(filters.creator || filters.maker || '').trim().toLowerCase();
+  const tag = String(filters.tag || filters.tags || '').trim().toLowerCase();
+
+  return stages.filter((stage) => {
+    const tags = Array.isArray(stage.tags) ? stage.tags.map((item) => String(item).toLowerCase()) : [];
+    const matchesQuery = !q || [stage.title, stage.difficulty, tags.join(' ')].some((value) => String(value || '').toLowerCase().includes(q));
+    const matchesCreator = !creator || String(stage.creatorNickname || '').toLowerCase().includes(creator);
+    const matchesTag = !tag || tags.includes(tag);
+    return matchesQuery && matchesCreator && matchesTag;
+  });
 }
 
 async function request(path, options = {}) {

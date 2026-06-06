@@ -90,12 +90,22 @@ function migrate() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       stage_id INTEGER NOT NULL,
-      clear_time INTEGER NOT NULL,
+      clear_time REAL NOT NULL,
       move_used INTEGER NOT NULL,
       score INTEGER NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id),
       FOREIGN KEY (stage_id) REFERENCES stages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS custom_blocks (
@@ -215,9 +225,38 @@ function ensureAdminUser() {
 }
 
 function ensureUniqueIndexes() {
+  dedupeRecords();
+  createIndex('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname_key ON users(nickname_key) WHERE nickname_key IS NOT NULL');
+  createIndex('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL');
+  createIndex('CREATE UNIQUE INDEX IF NOT EXISTS idx_records_user_stage ON records(user_id, stage_id)');
+  createIndex('CREATE INDEX IF NOT EXISTS idx_records_ranking ON records(stage_id, score DESC, clear_time ASC, move_used ASC)');
+  createIndex('CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at)');
+}
+
+function createIndex(sql) {
   try {
-    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname_key ON users(nickname_key) WHERE nickname_key IS NOT NULL');
+    db.run(sql);
   } catch (error) {
-    console.warn('Could not create nickname key index. Existing duplicate nicknames may need cleanup.');
+    console.warn(`Could not create index: ${sql}`);
   }
+}
+
+function dedupeRecords() {
+  const records = all(
+    `
+    SELECT *
+    FROM records
+    ORDER BY user_id ASC, stage_id ASC, score DESC, clear_time ASC, move_used ASC, created_at ASC
+    `
+  );
+  const seen = new Set();
+
+  records.forEach((record) => {
+    const key = `${record.user_id}:${record.stage_id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      return;
+    }
+    db.run('DELETE FROM records WHERE id = ?', [record.id]);
+  });
 }

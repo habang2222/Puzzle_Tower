@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import cors from 'cors';
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import { randomInt } from 'node:crypto';
 import { all, get, initDatabase, insert, run } from './db.js';
 import { createNicknameKey, parseTags, sanitizeDisplayText, validateNicknameInput } from './nickname.js';
 
@@ -83,6 +84,100 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   res.json({ token: createAuthToken(user), user: publicUser(user) });
+});
+
+app.post('/api/auth/password-reset/request', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const genericMessage = '가입된 이메일이면 비밀번호 재설정 코드가 발급됩니다.';
+
+  if (!isEmail(email)) {
+    res.status(400).json({ message: '올바른 이메일을 입력하세요.' });
+    return;
+  }
+
+  const user = get('SELECT * FROM users WHERE email = ?', [email]);
+  if (!user || !user.password_hash) {
+    res.json({ message: genericMessage });
+    return;
+  }
+
+  const recent = get(
+    `
+    SELECT created_at
+    FROM password_reset_tokens
+    WHERE user_id = ? AND created_at >= datetime('now', '-60 seconds')
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [user.id]
+  );
+  if (recent) {
+    res.status(429).json({ message: '비밀번호 재설정 코드는 1분에 한 번만 요청할 수 있습니다.' });
+    return;
+  }
+
+  const resetCode = String(randomInt(100000, 1000000));
+  const tokenHash = await bcrypt.hash(resetCode, 10);
+  run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL', [user.id]);
+  insert(
+    `
+    INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+    VALUES (?, ?, datetime('now', '+15 minutes'))
+    `,
+    [user.id, tokenHash]
+  );
+
+  const response = { message: genericMessage };
+  if (process.env.NODE_ENV !== 'production' || process.env.PASSWORD_RESET_EXPOSE_CODE === 'true') {
+    response.resetCode = resetCode;
+    response.message = '개발/제출용 재설정 코드가 발급되었습니다. 15분 안에 사용하세요.';
+  }
+  res.json(response);
+});
+
+app.post('/api/auth/password-reset/confirm', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const resetCode = String(req.body?.resetCode || req.body?.code || '').trim();
+  const password = String(req.body?.password || '');
+
+  if (!isEmail(email) || !/^\d{6}$/.test(resetCode) || password.length < 6) {
+    res.status(400).json({ message: '이메일, 6자리 코드, 6자 이상 새 비밀번호가 필요합니다.' });
+    return;
+  }
+
+  const user = get('SELECT * FROM users WHERE email = ?', [email]);
+  if (!user || !user.password_hash) {
+    res.status(400).json({ message: '재설정 코드가 올바르지 않거나 만료되었습니다.' });
+    return;
+  }
+
+  const tokens = all(
+    `
+    SELECT *
+    FROM password_reset_tokens
+    WHERE user_id = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+    ORDER BY created_at DESC
+    LIMIT 5
+    `,
+    [user.id]
+  );
+  let matchedToken = null;
+  for (const token of tokens) {
+    if (await bcrypt.compare(resetCode, token.token_hash)) {
+      matchedToken = token;
+      break;
+    }
+  }
+
+  if (!matchedToken) {
+    res.status(400).json({ message: '재설정 코드가 올바르지 않거나 만료되었습니다.' });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, user.id]);
+  run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [matchedToken.id]);
+  res.json({ message: '비밀번호가 변경되었습니다. 새 비밀번호로 로그인하세요.' });
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
@@ -309,7 +404,7 @@ app.post('/api/community/stages', requireAuth, (req, res) => {
     [
       generatedLevel,
       payload.title,
-      JSON.stringify({ board: payload.board, customBlocks: payload.customBlocks, clearHash: payload.clearHash }),
+      JSON.stringify({ board: payload.board, customBlocks: payload.customBlocks, visionRadius: payload.visionRadius, clearHash: payload.clearHash }),
       payload.moveLimit,
       payload.difficulty,
       JSON.stringify(payload.tags),
@@ -354,7 +449,7 @@ app.put('/api/community/stages/:id', requireAuth, (req, res) => {
     `,
     [
       payload.title,
-      JSON.stringify({ board: payload.board, customBlocks: payload.customBlocks, clearHash: payload.clearHash }),
+      JSON.stringify({ board: payload.board, customBlocks: payload.customBlocks, visionRadius: payload.visionRadius, clearHash: payload.clearHash }),
       payload.moveLimit,
       payload.difficulty,
       JSON.stringify(payload.tags),
@@ -408,22 +503,46 @@ app.post('/api/records', optionalAuth, (req, res) => {
     return;
   }
 
-  if (clearTime < 0 || moveUsed < 0 || moveUsed > stage.move_limit) {
+  if (clearTime < 0.05 || clearTime > 21600 || !Number.isInteger(moveUsed) || moveUsed < 0 || moveUsed > stage.move_limit) {
     res.status(400).json({ message: '기록 값이 올바르지 않습니다.' });
     return;
   }
 
-  const userId = req.user?.id || findOrCreateUser(nicknameValidation);
-  const score = calculateScore(stage.level, stage.move_limit, clearTime, moveUsed);
-  const id = insert(
-    `
-    INSERT INTO records (user_id, stage_id, clear_time, move_used, score)
-    VALUES (?, ?, ?, ?, ?)
-    `,
-    [userId, stageId, Math.round(clearTime), Math.round(moveUsed), score]
-  );
+  const existingNicknameOwner = get('SELECT id, provider FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
+  if (!req.user && existingNicknameOwner && existingNicknameOwner.provider !== 'guest') {
+    res.status(401).json({ message: '등록된 닉네임으로 기록을 저장하려면 로그인해야 합니다.' });
+    return;
+  }
 
-  const saved = getRecordById(id);
+  const userId = req.user?.id || findOrCreateUser(nicknameValidation);
+  const normalizedClearTime = Number(clearTime.toFixed(4));
+  const score = calculateScore(stage.level, stage.move_limit, normalizedClearTime, moveUsed);
+  const existingRecord = get('SELECT * FROM records WHERE user_id = ? AND stage_id = ?', [userId, stageId]);
+  let saved;
+
+  if (!existingRecord) {
+    const id = insert(
+      `
+      INSERT INTO records (user_id, stage_id, clear_time, move_used, score)
+      VALUES (?, ?, ?, ?, ?)
+      `,
+      [userId, stageId, normalizedClearTime, moveUsed, score]
+    );
+    saved = getRecordById(id);
+  } else if (isBetterRecord({ score, clear_time: normalizedClearTime, move_used: moveUsed }, existingRecord)) {
+    run(
+      `
+      UPDATE records
+      SET clear_time = ?, move_used = ?, score = ?, created_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [normalizedClearTime, moveUsed, score, existingRecord.id]
+    );
+    saved = getRecordById(existingRecord.id);
+  } else {
+    saved = getRecordById(existingRecord.id);
+  }
+
   res.status(201).json(saved);
 });
 
@@ -527,7 +646,7 @@ app.post('/api/admin/stages', requireAdmin, (req, res) => {
       [
         payload.level,
         payload.title,
-        JSON.stringify({ board: payload.board, customBlocks: payload.customBlocks }),
+        JSON.stringify({ board: payload.board, customBlocks: payload.customBlocks, visionRadius: payload.visionRadius }),
         payload.moveLimit,
         payload.difficulty,
         JSON.stringify(payload.tags),
@@ -566,7 +685,7 @@ app.put('/api/admin/stages/:id', requireAdmin, (req, res) => {
       [
         payload.level,
         payload.title,
-        JSON.stringify({ board: payload.board, customBlocks: payload.customBlocks }),
+        JSON.stringify({ board: payload.board, customBlocks: payload.customBlocks, visionRadius: payload.visionRadius }),
         payload.moveLimit,
         payload.difficulty,
         JSON.stringify(payload.tags),
@@ -792,29 +911,30 @@ function createSearchFilters(query, entityAlias, userAlias) {
   const tag = parseTags(query?.tag || query?.tags || '', 1)[0] || '';
 
   if (q) {
+    const likeQ = `%${escapeLike(q)}%`;
     if (entityAlias === 'b') {
       clauses.push(`(
-        LOWER(${entityAlias}.name) LIKE ?
-        OR LOWER(${entityAlias}.effect) LIKE ?
-        OR LOWER(${entityAlias}.tile) LIKE ?
-        OR LOWER(COALESCE(${entityAlias}.message, '')) LIKE ?
-        OR LOWER(COALESCE(${entityAlias}.code_data, '')) LIKE ?
-        OR LOWER(${entityAlias}.tags) LIKE ?
+        LOWER(${entityAlias}.name) LIKE ? ESCAPE '\\'
+        OR LOWER(${entityAlias}.effect) LIKE ? ESCAPE '\\'
+        OR LOWER(${entityAlias}.tile) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(${entityAlias}.message, '')) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(${entityAlias}.code_data, '')) LIKE ? ESCAPE '\\'
+        OR LOWER(${entityAlias}.tags) LIKE ? ESCAPE '\\'
       )`);
-      params.push(...Array(6).fill(`%${q}%`));
+      params.push(...Array(6).fill(likeQ));
     } else {
       clauses.push(`(
-        LOWER(${entityAlias}.title) LIKE ?
-        OR LOWER(${entityAlias}.difficulty) LIKE ?
-        OR LOWER(${entityAlias}.tags) LIKE ?
+        LOWER(${entityAlias}.title) LIKE ? ESCAPE '\\'
+        OR LOWER(${entityAlias}.difficulty) LIKE ? ESCAPE '\\'
+        OR LOWER(${entityAlias}.tags) LIKE ? ESCAPE '\\'
       )`);
-      params.push(...Array(3).fill(`%${q}%`));
+      params.push(...Array(3).fill(likeQ));
     }
   }
 
   if (creator) {
-    clauses.push(`LOWER(${userAlias}.nickname) LIKE ?`);
-    params.push(`%${creator}%`);
+    clauses.push(`LOWER(${userAlias}.nickname) LIKE ? ESCAPE '\\'`);
+    params.push(`%${escapeLike(creator)}%`);
   }
 
   if (tag) {
@@ -826,6 +946,10 @@ function createSearchFilters(query, entityAlias, userAlias) {
     where: clauses.length ? `AND ${clauses.join(' AND ')}` : '',
     params
   };
+}
+
+function escapeLike(value) {
+  return String(value || '').replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
 function createAuthToken(user) {
@@ -864,6 +988,19 @@ function getRecordById(id) {
   );
 }
 
+function isBetterRecord(next, previous) {
+  if (!previous) {
+    return true;
+  }
+  if (next.score !== previous.score) {
+    return next.score > previous.score;
+  }
+  if (next.clear_time !== previous.clear_time) {
+    return next.clear_time < previous.clear_time;
+  }
+  return next.move_used < previous.move_used;
+}
+
 function toStage(row) {
   const parsed = JSON.parse(row.board_data);
   const customBlockResult = normalizeCustomBlocks(parsed.customBlocks || parsed.blocks || []);
@@ -873,6 +1010,7 @@ function toStage(row) {
     title: row.title,
     board: parsed.board || parsed,
     customBlocks: customBlockResult.ok ? customBlockResult.blocks : [],
+    visionRadius: normalizeVisionRadius(parsed.visionRadius ?? parsed.vision_radius ?? ''),
     moveLimit: row.move_limit,
     difficulty: row.difficulty,
     tags: safeParseJson(row.tags, []),
@@ -924,6 +1062,7 @@ function validateStagePayload(body, options = {}) {
     moveLimit: Number(body?.moveLimit ?? body?.move_limit),
     board: body?.board,
     customBlocks: customBlockValidation.blocks,
+    visionRadius: normalizeVisionRadius(body?.visionRadius ?? body?.vision_radius ?? ''),
     tags,
     clearHash: sanitizeDisplayText(body?.clearHash, 120, ''),
     creatorClearVerified: body?.creatorClearVerified === true
@@ -1287,7 +1426,7 @@ function normalizeBlockImage(value) {
 function calculateScore(level, moveLimit, clearTime, moveUsed) {
   const remainingMoves = Math.max(moveLimit - moveUsed, 0);
   const levelWeight = Math.min(level, 30);
-  return Math.max(levelWeight * 1000 + remainingMoves * 120 - Math.round(clearTime) * 8, levelWeight * 100);
+  return Math.max(Math.round(levelWeight * 1000 + remainingMoves * 120 - clearTime * 8), levelWeight * 100);
 }
 
 function clamp(value, min, max) {
@@ -1295,6 +1434,17 @@ function clamp(value, min, max) {
     return min;
   }
   return Math.min(Math.max(Math.round(value), min), max);
+}
+
+function normalizeVisionRadius(value) {
+  if (value === '' || value === null || value === undefined) {
+    return '';
+  }
+  const radius = Number(value);
+  if (!Number.isFinite(radius) || radius <= 0) {
+    return '';
+  }
+  return clamp(radius, 1, 10);
 }
 
 function isEmail(value) {

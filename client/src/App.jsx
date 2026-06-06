@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowLeft,
@@ -17,6 +17,7 @@ import {
   ListRestart,
   Lock,
   LogIn,
+  Map as MapIcon,
   Pencil,
   Play,
   RotateCcw,
@@ -34,6 +35,7 @@ import {
 import { fallbackStages } from './data/stages.js';
 import { calculateScore, createInitialGame, movePlayer, tickGame } from './game/engine.js';
 import {
+  confirmPasswordReset,
   configureAdminLogin,
   createStage,
   deleteCommunityStage,
@@ -51,6 +53,7 @@ import {
   loginUser,
   publishCommunityStage,
   registerUser,
+  requestPasswordReset,
   saveRecord,
   setAuthToken,
   createCustomBlock,
@@ -101,12 +104,14 @@ export default function App() {
   const [nickname, setNickname] = useState(() => localStorage.getItem(nicknameKey) || 'player');
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login');
-  const [authForm, setAuthForm] = useState({ nickname: '', email: '', password: '' });
+  const [authForm, setAuthForm] = useState({ nickname: '', email: '', password: '', resetCode: '' });
+  const [passwordResetStep, setPasswordResetStep] = useState('request');
   const [authMessage, setAuthMessage] = useState('');
   const [stages, setStages] = useState(fallbackStages.map((stage) => ({ ...stage, isOfficial: true })));
   const [selectedStage, setSelectedStage] = useState({ ...fallbackStages[0], isOfficial: true });
   const [game, setGame] = useState(() => createInitialGame({ ...fallbackStages[0], isOfficial: true }));
   const [elapsed, setElapsed] = useState(0);
+  const timerStartRef = useRef(0);
   const [apiOnline, setApiOnline] = useState(false);
   const [rankings, setRankings] = useState([]);
   const [rankingStageId, setRankingStageId] = useState('');
@@ -127,9 +132,11 @@ export default function App() {
   const [publicBlocks, setPublicBlocks] = useState([]);
   const [myBlocks, setMyBlocks] = useState([]);
   const [blockDraft, setBlockDraft] = useState(() => JSON.stringify(defaultBlockCode, null, 2));
+  const [stageCodeDraft, setStageCodeDraft] = useState('');
   const [editingBlockId, setEditingBlockId] = useState(null);
   const [blockMessage, setBlockMessage] = useState('');
   const [blockGuideOpen, setBlockGuideOpen] = useState(false);
+  const [showPathHint, setShowPathHint] = useState(false);
 
   const movesRemaining = selectedStage.moveLimit - game.movesUsed;
   const currentBest = bestRecords[selectedStage.id];
@@ -198,15 +205,21 @@ export default function App() {
       return undefined;
     }
 
-    const timer = window.setInterval(() => {
-      setElapsed((value) => {
-        const nextElapsed = value + 1;
-        setGame((current) => tickGame(current, nextElapsed));
-        return nextElapsed;
-      });
-    }, 1000);
+    if (!timerStartRef.current) {
+      timerStartRef.current = performance.now() - elapsed * 1000;
+    }
 
-    return () => window.clearInterval(timer);
+    let frameId = 0;
+    const tick = () => {
+      const nextElapsed = getElapsedFromTimer(timerStartRef.current);
+      setElapsed(nextElapsed);
+      setGame((current) => tickGame(current, nextElapsed));
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+
+    return () => window.cancelAnimationFrame(frameId);
   }, [game.status, view]);
 
   useEffect(() => {
@@ -270,17 +283,22 @@ export default function App() {
   }, [bestRecords, elapsed, game.movesUsed, game.status, nickname, recordSaved, selectedStage, user]);
 
   const startStage = useCallback((stage) => {
-    setSelectedStage(stage);
-    setGame(createInitialGame(stage));
+    const normalizedStage = normalizeStage(stage);
+    timerStartRef.current = performance.now();
+    setSelectedStage(normalizedStage);
+    setGame(createInitialGame(normalizedStage));
     setElapsed(0);
     setRecordSaved(false);
+    setShowPathHint(false);
     setView('game');
   }, []);
 
   const restartStage = useCallback(() => {
+    timerStartRef.current = performance.now();
     setGame(createInitialGame(selectedStage));
     setElapsed(0);
     setRecordSaved(false);
+    setShowPathHint(false);
   }, [selectedStage]);
 
   const goNextStage = useCallback(() => {
@@ -293,7 +311,9 @@ export default function App() {
   }, [selectedStage, stages, startStage]);
 
   const handleMove = useCallback((direction) => {
-    setGame((current) => movePlayer(current, direction, elapsed));
+    const currentElapsed = timerStartRef.current ? getElapsedFromTimer(timerStartRef.current) : elapsed;
+    setElapsed(currentElapsed);
+    setGame((current) => movePlayer(current, direction, currentElapsed));
   }, [elapsed]);
 
   useEffect(() => {
@@ -313,7 +333,7 @@ export default function App() {
         d: 'right'
       };
 
-      const direction = keyMap[event.key];
+      const direction = keyMap[event.key] || keyMap[event.key.toLowerCase()];
       if (direction) {
         event.preventDefault();
         handleMove(direction);
@@ -491,6 +511,27 @@ export default function App() {
     setAuthMessage('');
 
     try {
+      if (authMode === 'reset') {
+        if (passwordResetStep === 'request') {
+          const result = await requestPasswordReset({ email: authForm.email });
+          setAuthMessage(result.resetCode ? `${result.message} 코드: ${result.resetCode}` : result.message);
+          setAuthForm((current) => ({ ...current, resetCode: result.resetCode || current.resetCode, password: '' }));
+          setPasswordResetStep('confirm');
+          return;
+        }
+
+        const result = await confirmPasswordReset({
+          email: authForm.email,
+          resetCode: authForm.resetCode,
+          password: authForm.password
+        });
+        setAuthMessage(result.message);
+        setAuthMode('login');
+        setPasswordResetStep('request');
+        setAuthForm((current) => ({ ...current, password: '', resetCode: '' }));
+        return;
+      }
+
       const result =
         authMode === 'signup'
           ? await registerUser(authForm)
@@ -529,7 +570,8 @@ export default function App() {
         moveLimit: Number(parsed.moveLimit),
         board: parsed.board,
         tags: parsed.tags || [],
-        customBlocks: parsed.customBlocks || []
+        customBlocks: parsed.customBlocks || [],
+        visionRadius: normalizeVisionRadius(parsed.visionRadius ?? parsed.vision_radius ?? '')
       };
       const saved =
         parsed.id && stages.some((stage) => stage.id === parsed.id)
@@ -586,8 +628,8 @@ export default function App() {
 
   const resizeBuilder = (rows, cols) => {
     setBuilder((current) => {
-      const nextRows = Number(rows);
-      const nextCols = Number(cols);
+      const nextRows = clampInteger(rows, 4, 10, current.rows || 6);
+      const nextCols = clampInteger(cols, 4, 10, current.cols || 6);
       const board = Array.from({ length: nextRows }, (_, rowIndex) =>
         Array.from({ length: nextCols }, (_, colIndex) => current.board[rowIndex]?.[colIndex] || '.')
       );
@@ -617,6 +659,8 @@ export default function App() {
   const clearBuilder = () => {
     setBuilder(createBuilderState());
     setSelectedTile('#');
+    setBuilderVerifiedHash('');
+    setStageCodeDraft('');
     setBuilderMessage('');
   };
 
@@ -629,6 +673,7 @@ export default function App() {
       difficulty: stage.difficulty,
       moveLimit: stage.moveLimit,
       tags: (stage.tags || []).join(', '),
+      visionRadius: normalizeVisionRadius(stage.visionRadius ?? ''),
       rows: board.length,
       cols: board[0]?.length || 6,
       board
@@ -696,6 +741,7 @@ export default function App() {
       board: payload.board,
       customBlocks: payload.customBlocks,
       tags: payload.tags,
+      visionRadius: payload.visionRadius,
       creatorId: user?.id,
       creatorNickname: user?.nickname,
       isOfficial: false,
@@ -704,11 +750,66 @@ export default function App() {
     };
 
     setSelectedStage(draftStage);
+    timerStartRef.current = performance.now();
     setGame(createInitialGame(draftStage));
     setElapsed(0);
     setRecordSaved(false);
     setBuilderMessage('테스트 플레이를 시작했습니다. 클리어해야 업로드할 수 있습니다.');
     setView('game');
+  };
+
+  const exportBuilderCode = () => {
+    const validation = validateBuilder(builder);
+    if (!validation.ok) {
+      setBuilderMessage(validation.message);
+      return;
+    }
+
+    const payload = createBuilderPayload(builder, customBlocks);
+    setStageCodeDraft(JSON.stringify(payload, null, 2));
+    setBuilderMessage('현재 맵을 스테이지 코드로 만들었습니다.');
+  };
+
+  const applyStageCodeDraft = () => {
+    const parsed = safeJsonParse(stageCodeDraft, null);
+    if (!parsed || typeof parsed !== 'object') {
+      setBuilderMessage('스테이지 코드는 JSON 객체여야 합니다.');
+      return;
+    }
+
+    const boardRows = Array.isArray(parsed.board) ? parsed.board.map((row) => String(row || '')) : [];
+    const width = boardRows[0]?.length || 0;
+    if (boardRows.length < 4 || boardRows.length > 10 || width < 4 || width > 10 || boardRows.some((row) => row.length !== width)) {
+      setBuilderMessage('board는 4~10칸 크기의 같은 길이 문자열 배열이어야 합니다.');
+      return;
+    }
+
+    const draftBlocks = Array.isArray(parsed.customBlocks) ? parsed.customBlocks.map(normalizeCustomBlock) : [];
+    if (draftBlocks.length) {
+      mergeCustomBlocks(draftBlocks);
+    }
+
+    const nextBuilder = {
+      id: null,
+      title: String(parsed.title || '코드 스테이지').slice(0, 40),
+      difficulty: String(parsed.difficulty || '코드').slice(0, 20),
+      moveLimit: clampInteger(parsed.moveLimit ?? parsed.move_limit, 1, 99, 12),
+      tags: parseTags(parsed.tags || []).join(', '),
+      visionRadius: normalizeVisionRadius(parsed.visionRadius ?? parsed.vision_radius ?? ''),
+      rows: boardRows.length,
+      cols: width,
+      board: boardRows.map((row) => row.split(''))
+    };
+
+    const validation = validateBuilder(nextBuilder);
+    if (!validation.ok) {
+      setBuilderMessage(validation.message);
+      return;
+    }
+
+    setBuilder(nextBuilder);
+    setBuilderVerifiedHash('');
+    setBuilderMessage('스테이지 코드를 제작기에 적용했습니다. 업로드 전에 테스트 클리어가 필요합니다.');
   };
 
   const removeMyStage = async (stageId) => {
@@ -776,20 +877,10 @@ export default function App() {
               <p className="intro-copy">
                 직접 만든 맵을 업로드하고, 다른 플레이어가 만든 퍼즐까지 도전하세요. 벽, 포탈, 열쇠, 잠금 타일로 경로를 설계할 수 있습니다.
               </p>
-              <div className="nickname-row">
-                <label htmlFor="nickname">플레이어</label>
-                <input
-                  disabled={Boolean(user)}
-                  id="nickname"
-                  maxLength={18}
-                  onChange={(event) => setNickname(event.target.value)}
-                  value={user?.nickname || nickname}
-                />
-              </div>
               <div className="hero-actions">
                 <button className="primary" onClick={() => startStage(selectedStage)} type="button">
                   <Play size={18} />
-                  <span>바로 시작</span>
+                  <span>게임 시작</span>
                 </button>
                 <button onClick={() => setView('builder')} type="button">
                   <Hammer size={18} />
@@ -830,7 +921,7 @@ export default function App() {
             <div className="section-heading">
               <div>
                 <p className="eyebrow">PLAYER ACCOUNT</p>
-                <h2>{user ? '계정' : authMode === 'signup' ? '회원가입' : '로그인'}</h2>
+                <h2>{user ? '계정' : authMode === 'signup' ? '회원가입' : authMode === 'reset' ? '비밀번호 찾기' : '로그인'}</h2>
               </div>
               <StatusPill online={apiOnline} />
             </div>
@@ -858,11 +949,11 @@ export default function App() {
             ) : (
               <form className="auth-card" onSubmit={submitAuth}>
                 <div className="auth-tabs">
-                  <button className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')} type="button">
+                  <button className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setPasswordResetStep('request'); }} type="button">
                     <LogIn size={17} />
                     <span>로그인</span>
                   </button>
-                  <button className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')} type="button">
+                  <button className={authMode === 'signup' ? 'active' : ''} onClick={() => { setAuthMode('signup'); setPasswordResetStep('request'); }} type="button">
                     <UserPlus size={17} />
                     <span>회원가입</span>
                   </button>
@@ -885,19 +976,46 @@ export default function App() {
                   type="email"
                   value={authForm.email}
                 />
-                <label htmlFor="auth-password">비밀번호</label>
-                <input
-                  id="auth-password"
-                  minLength={6}
-                  onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))}
-                  type="password"
-                  value={authForm.password}
-                />
+                {authMode === 'reset' && passwordResetStep === 'confirm' && (
+                  <>
+                    <label htmlFor="reset-code">재설정 코드</label>
+                    <input
+                      id="reset-code"
+                      inputMode="numeric"
+                      maxLength={6}
+                      onChange={(event) => setAuthForm((current) => ({ ...current, resetCode: event.target.value }))}
+                      value={authForm.resetCode}
+                    />
+                  </>
+                )}
+                {(authMode !== 'reset' || passwordResetStep === 'confirm') && (
+                  <>
+                    <label htmlFor="auth-password">{authMode === 'reset' ? '새 비밀번호' : '비밀번호'}</label>
+                    <input
+                      id="auth-password"
+                      minLength={6}
+                      onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))}
+                      type="password"
+                      value={authForm.password}
+                    />
+                  </>
+                )}
                 <div className="hero-actions">
                   <button className="primary" type="submit">
                     {authMode === 'signup' ? <UserPlus size={18} /> : <LogIn size={18} />}
-                    <span>{authMode === 'signup' ? '가입하기' : '로그인'}</span>
+                    <span>{authMode === 'signup' ? '가입하기' : authMode === 'reset' ? (passwordResetStep === 'request' ? '코드 받기' : '비밀번호 변경') : '로그인'}</span>
                   </button>
+                  {authMode !== 'reset' ? (
+                    <button onClick={() => { setAuthMode('reset'); setPasswordResetStep('request'); setAuthMessage(''); }} type="button">
+                      <KeyRound size={18} />
+                      <span>비밀번호 찾기</span>
+                    </button>
+                  ) : (
+                    <button onClick={() => { setAuthMode('login'); setPasswordResetStep('request'); setAuthMessage(''); }} type="button">
+                      <LogIn size={18} />
+                      <span>로그인으로</span>
+                    </button>
+                  )}
                 </div>
                 {authMessage && <p className="admin-message">{authMessage}</p>}
               </form>
@@ -917,18 +1035,21 @@ export default function App() {
             <div className="search-panel">
               <input
                 aria-label="맵 이름 검색"
+                onKeyDown={(event) => runOnEnter(event, loadFilteredStages)}
                 onChange={(event) => setStageSearch((current) => ({ ...current, q: event.target.value }))}
                 placeholder="맵 이름/난이도 검색"
                 value={stageSearch.q}
               />
               <input
                 aria-label="제작자 검색"
+                onKeyDown={(event) => runOnEnter(event, loadFilteredStages)}
                 onChange={(event) => setStageSearch((current) => ({ ...current, creator: event.target.value }))}
                 placeholder="제작자 검색"
                 value={stageSearch.creator}
               />
               <input
                 aria-label="태그 검색"
+                onKeyDown={(event) => runOnEnter(event, loadFilteredStages)}
                 onChange={(event) => setStageSearch((current) => ({ ...current, tag: event.target.value }))}
                 placeholder="태그 검색"
                 value={stageSearch.tag}
@@ -948,8 +1069,14 @@ export default function App() {
                 <span>초기화</span>
               </button>
             </div>
+            <p className="result-count">검색 결과 {stages.length}개</p>
             <div className="stage-grid">
-              {stages.map((stage) => (
+              {stages.length === 0 ? (
+                <div className="empty-state">
+                  <DoorOpen size={28} />
+                  <p>조건에 맞는 스테이지가 없습니다.</p>
+                </div>
+              ) : stages.map((stage) => (
                 <article className={stage.isOfficial ? 'stage-card' : 'stage-card community'} key={stage.id}>
                   <div className="stage-card-header">
                     <span>{stage.isOfficial ? `LEVEL ${stage.level}` : 'COMMUNITY'}</span>
@@ -1033,6 +1160,18 @@ export default function App() {
                       />
                     </div>
                     <div>
+                      <label htmlFor="map-vision">시야 반경</label>
+                      <input
+                        id="map-vision"
+                        max={10}
+                        min={0}
+                        onChange={(event) => setBuilderField('visionRadius', event.target.value)}
+                        placeholder="빈칸 = 전체 보기"
+                        type="number"
+                        value={builder.visionRadius}
+                      />
+                    </div>
+                    <div>
                       <label htmlFor="map-rows">행</label>
                       <input
                         id="map-rows"
@@ -1082,6 +1221,26 @@ export default function App() {
                     <button onClick={clearBuilder} type="button">
                       <Eraser size={18} />
                       <span>새 맵</span>
+                    </button>
+                  </div>
+                  <div className="stage-code-panel">
+                    <div className="block-panel-title">
+                      <h3>스테이지 코드</h3>
+                      <button onClick={exportBuilderCode} type="button">
+                        <Code2 size={17} />
+                        <span>현재 맵 코드</span>
+                      </button>
+                    </div>
+                    <textarea
+                      className="stage-code"
+                      onChange={(event) => setStageCodeDraft(event.target.value)}
+                      placeholder="JSON 코드만으로 스테이지를 만들 수 있습니다."
+                      spellCheck="false"
+                      value={stageCodeDraft}
+                    />
+                    <button onClick={applyStageCodeDraft} type="button">
+                      <MapIcon size={17} />
+                      <span>코드로 맵 적용</span>
                     </button>
                   </div>
                   {builderMessage && <p className="admin-message">{builderMessage}</p>}
@@ -1235,7 +1394,7 @@ export default function App() {
               <div className="stat-list">
                 <Stat label="남은 이동" value={movesRemaining} />
                 <Stat label="사용 이동" value={game.movesUsed} />
-                <Stat label="시간" value={`${elapsed}s`} />
+                <Stat label="시간" value={formatTime(elapsed)} />
                 <Stat label="최고 기록" value={currentBest ? `${currentBest.score}점` : '-'} />
               </div>
               <div className="inventory-row">
@@ -1262,11 +1421,15 @@ export default function App() {
                   <DoorOpen size={17} />
                   <span>스테이지</span>
                 </button>
+                <button className={showPathHint ? 'active' : ''} onClick={() => setShowPathHint((value) => !value)} type="button">
+                  <MapIcon size={17} />
+                  <span>경로 힌트</span>
+                </button>
               </div>
             </aside>
 
             <div className="board-zone">
-              <GameBoard game={game} />
+              <GameBoard game={game} showPathHint={showPathHint} />
               <MovePad onMove={handleMove} />
             </div>
 
@@ -1325,7 +1488,7 @@ export default function App() {
                     <span>{record.nickname}</span>
                     <span>{record.is_official === 0 ? '커뮤니티' : `Lv.${record.level}`}</span>
                     <span>{record.score}</span>
-                    <span>{record.clear_time}s</span>
+                    <span>{formatTime(record.clear_time)}</span>
                   </div>
                 ))
               )}
@@ -1411,12 +1574,19 @@ export default function App() {
 }
 
 function AdSlot() {
+  const pushedRef = useRef(false);
   useEffect(() => {
+    if (pushedRef.current) {
+      return;
+    }
+    pushedRef.current = true;
     try {
       window.adsbygoogle = window.adsbygoogle || [];
       window.adsbygoogle.push({});
     } catch (error) {
-      // Ad blockers or local previews can block AdSense; the game should continue.
+      if (import.meta.env.DEV) {
+        console.debug('AdSense preview failed:', error);
+      }
     }
   }, []);
 
@@ -1426,16 +1596,28 @@ function AdSlot() {
         className="adsbygoogle"
         data-ad-client="ca-pub-3303941146778727"
         data-ad-slot="4790314323"
-        style={{ display: 'inline-block', width: '360px', height: '800px' }}
+        data-ad-format="auto"
+        data-full-width-responsive="true"
+        style={{ display: 'block' }}
       />
     </aside>
   );
 }
 
-function GameBoard({ game }) {
+function GameBoard({ game, showPathHint = false }) {
   const columns = game.tiles[0]?.length || 1;
   const customBlocks = game.customBlocks || [];
   const currentBlock = getCurrentPlayerBlock(game);
+  const pathCells = showPathHint ? new Set(findPathToGoal(game).slice(1).map((point) => pointKey(point))) : new Set();
+
+  if (!game.validBoard || !game.player || !game.goal || !game.tiles.length) {
+    return (
+      <div className="board-error">
+        <strong>맵 데이터 오류</strong>
+        <p>시작 타일 P와 목표 타일 G가 각각 하나씩 있는지 확인하세요.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="board-stack">
@@ -1443,10 +1625,18 @@ function GameBoard({ game }) {
         {game.tiles.map((row, rowIndex) =>
           row.map((tile, colIndex) => {
             const isPlayer = game.player.row === rowIndex && game.player.col === colIndex;
-            const className = ['tile', tileClass(tile, customBlocks), isPlayer ? 'player' : ''].filter(Boolean).join(' ');
+            const point = { row: rowIndex, col: colIndex };
+            const fogged = isFogged(game, point);
+            const className = [
+              'tile',
+              tileClass(tile, customBlocks),
+              fogged ? 'fogged' : '',
+              pathCells.has(pointKey(point)) && !fogged ? 'path-hint' : '',
+              isPlayer ? 'player' : ''
+            ].filter(Boolean).join(' ');
             return (
               <div className={className} key={`${rowIndex}-${colIndex}`} style={tileStyle(tile, customBlocks)}>
-                {isPlayer ? <Crown size={24} /> : tileLabel(tile, customBlocks)}
+                {fogged ? '' : isPlayer ? <Crown size={24} /> : tileLabel(tile, customBlocks)}
               </div>
             );
           })
@@ -1499,6 +1689,9 @@ function MovePad({ onMove }) {
 
 function MiniBoard({ compact = false, stage }) {
   const customBlocks = stage.customBlocks || [];
+  if (!Array.isArray(stage.board) || stage.board.length === 0) {
+    return <div className={compact ? 'mini-board compact' : 'mini-board'} />;
+  }
   return (
     <div className={compact ? 'mini-board compact' : 'mini-board'} style={{ '--columns': stage.board[0]?.length || 1 }}>
       {stage.board.flatMap((row, rowIndex) =>
@@ -1531,6 +1724,8 @@ function BuilderBoard({ board, customBlocks, onPaint }) {
 }
 
 function BlockItem({ block, onDownload, onEdit, onRemove }) {
+  const summary = block.description || createBlockSummary(block);
+  const ruleSummary = createBlockRuleSummary(block);
   return (
     <div className="block-item">
       <span className="palette-chip custom" style={tileStyle(block.tile, [block])}>
@@ -1539,10 +1734,10 @@ function BlockItem({ block, onDownload, onEdit, onRemove }) {
       <div>
         <strong>{block.name}</strong>
         <span>
-          {block.effect}
-          {block.outDirection ? ` ${block.outDirection}` : ''} · {block.moveCost} cost · {block.downloads || 0} downloads
+          {formatBlockEffect(block)} · 이동 {block.moveCost} · 다운로드 {block.downloads || 0}
         </span>
-        {block.description && <p className="block-item-description">{block.description}</p>}
+        <p className="block-item-description">{summary}</p>
+        {ruleSummary && <span className="block-item-rule">{ruleSummary}</span>}
         {block.tags?.length > 0 && <TagList tags={block.tags} />}
       </div>
       <div className="block-actions">
@@ -1974,7 +2169,7 @@ function ResultOverlay({ elapsed, game, onNext, onRestart, score, stage }) {
         <div className="result-stats">
           <Stat label="스테이지" value={stage.isOfficial ? `Lv.${stage.level}` : '커뮤니티'} />
           <Stat label="점수" value={cleared ? score : 0} />
-          <Stat label="시간" value={`${elapsed}s`} />
+          <Stat label="시간" value={formatTime(elapsed)} />
           <Stat label="이동" value={`${game.movesUsed}/${stage.moveLimit}`} />
         </div>
         <div className="hero-actions">
@@ -2007,6 +2202,10 @@ function StatusPill({ online }) {
 
 function normalizeStage(stage) {
   const boardData = stage.board_data || stage.boardData || stage.board;
+  const parsedBoardData = typeof boardData === 'string' ? safeJsonParse(boardData, {}) : null;
+  const board = parsedBoardData ? parsedBoardData.board || parsedBoardData : boardData;
+  const normalizedBoard = Array.isArray(board) ? board.map((row) => String(row || '')) : [];
+  const customBlockSource = Array.isArray(stage.customBlocks) ? stage.customBlocks : parsedBoardData?.customBlocks || parsedBoardData?.blocks || [];
   const isOfficial = stage.isOfficial ?? (stage.is_official === undefined ? true : stage.is_official !== 0);
   return {
     id: stage.id,
@@ -2014,9 +2213,10 @@ function normalizeStage(stage) {
     title: stage.title || `Level ${stage.level}`,
     difficulty: stage.difficulty,
     moveLimit: stage.moveLimit ?? stage.move_limit,
-    board: typeof boardData === 'string' ? JSON.parse(boardData).board || JSON.parse(boardData) : boardData,
-    customBlocks: Array.isArray(stage.customBlocks) ? stage.customBlocks.map(normalizeCustomBlock) : [],
+    board: normalizedBoard,
+    customBlocks: Array.isArray(customBlockSource) ? customBlockSource.map(normalizeCustomBlock) : [],
     tags: parseTags(stage.tags || []),
+    visionRadius: normalizeVisionRadius(stage.visionRadius ?? stage.vision_radius ?? parsedBoardData?.visionRadius ?? ''),
     creatorId: stage.creatorId ?? stage.creator_id,
     creatorNickname: stage.creatorNickname ?? stage.creator_nickname,
     isOfficial,
@@ -2187,7 +2387,8 @@ function stageToDraft(stage) {
     moveLimit: stage.moveLimit,
     tags: stage.tags || [],
     board: stage.board,
-    customBlocks: stage.customBlocks || []
+    customBlocks: stage.customBlocks || [],
+    visionRadius: normalizeVisionRadius(stage.visionRadius ?? '')
   };
 }
 
@@ -2197,6 +2398,7 @@ function createBuilderState() {
     title: '내 퍼즐 맵',
     difficulty: '커뮤니티',
     moveLimit: 12,
+    visionRadius: '',
     tags: 'community',
     rows: 6,
     cols: 6,
@@ -2225,7 +2427,11 @@ function ensureSingleTile(board, tile, fallbackRow, fallbackCol) {
   });
 
   if (!found) {
-    board[fallbackRow][fallbackCol] = tile;
+    const safeRow = clampInteger(fallbackRow, 0, Math.max(board.length - 1, 0), 0);
+    const safeCol = clampInteger(fallbackCol, 0, Math.max((board[safeRow]?.length || 1) - 1, 0), 0);
+    if (board[safeRow]) {
+      board[safeRow][safeCol] = tile;
+    }
   }
 }
 
@@ -2246,6 +2452,9 @@ function validateBuilder(builder) {
   if ((flat.match(/P/g) || []).length !== 1 || (flat.match(/G/g) || []).length !== 1) {
     return { ok: false, message: '시작 타일과 목표 타일은 각각 하나씩 필요합니다.' };
   }
+  if (board.length < 4 || board.length > 10 || board.some((row) => row.length < 4 || row.length > 10 || row.length !== board[0].length)) {
+    return { ok: false, message: '맵 크기는 4x4부터 10x10까지, 모든 줄 길이가 같아야 합니다.' };
+  }
 
   return { ok: true };
 }
@@ -2257,7 +2466,8 @@ function createBuilderPayload(builder, customBlocks) {
     moveLimit: Number(builder.moveLimit),
     tags: parseTags(builder.tags),
     board: boardToStrings(builder.board),
-    customBlocks: getUsedCustomBlocks(builder.board, customBlocks)
+    customBlocks: getUsedCustomBlocks(builder.board, customBlocks),
+    visionRadius: normalizeVisionRadius(builder.visionRadius)
   };
 }
 
@@ -2547,6 +2757,108 @@ function chooseBetterRecord(previous, next) {
   return previous;
 }
 
+function getElapsedFromTimer(startTime) {
+  return Number(((performance.now() - startTime) / 1000).toFixed(4));
+}
+
+function formatTime(value) {
+  return `${Number(value || 0).toFixed(4)}s`;
+}
+
+function runOnEnter(event, action) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    action();
+  }
+}
+
+function clampInteger(value, min, max, fallback = min) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(Math.round(number), max));
+}
+
+function normalizeVisionRadius(value) {
+  if (value === '' || value === null || value === undefined) {
+    return '';
+  }
+  const radius = Number(value);
+  if (!Number.isFinite(radius) || radius <= 0) {
+    return '';
+  }
+  return clampInteger(radius, 1, 10, '');
+}
+
+function pointKey(point) {
+  return `${point.row}:${point.col}`;
+}
+
+function manhattanDistance(a, b) {
+  return Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
+}
+
+function isFogged(game, point) {
+  const radius = normalizeVisionRadius(game.stage?.visionRadius);
+  return radius !== '' && manhattanDistance(game.player, point) > radius;
+}
+
+function findPathToGoal(game) {
+  if (!game.player || !game.goal || !game.tiles?.length) {
+    return [];
+  }
+
+  const queue = [{ point: game.player, path: [game.player] }];
+  const visited = new Set([pointKey(game.player)]);
+  const steps = [
+    { row: -1, col: 0 },
+    { row: 1, col: 0 },
+    { row: 0, col: -1 },
+    { row: 0, col: 1 }
+  ];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (current.point.row === game.goal.row && current.point.col === game.goal.col) {
+      return current.path;
+    }
+
+    steps.forEach((step) => {
+      const next = { row: current.point.row + step.row, col: current.point.col + step.col };
+      const key = pointKey(next);
+      if (visited.has(key) || !isPathPassable(game, next)) {
+        return;
+      }
+      visited.add(key);
+      queue.push({ point: next, path: [...current.path, next] });
+    });
+  }
+
+  return [];
+}
+
+function isPathPassable(game, point) {
+  const tile = game.tiles?.[point.row]?.[point.col];
+  if (!tile || tile === '#') {
+    return false;
+  }
+  if (tile === 'L' && !game.hasKey) {
+    return false;
+  }
+  const block = getCustomBlock(tile, game.customBlocks || []);
+  if (!block) {
+    return true;
+  }
+  if (block.effect === 'wall' || block.effect === 'gameover') {
+    return false;
+  }
+  if (block.effect === 'lock' && !game.hasKey) {
+    return false;
+  }
+  return true;
+}
+
 function tileClass(tile, customBlocks = []) {
   if (getCustomBlock(tile, customBlocks)) return 'custom';
   if (tile === '#') return 'wall';
@@ -2590,6 +2902,9 @@ function tileStyle(tile, customBlocks = []) {
 }
 
 function getCurrentPlayerBlock(game) {
+  if (!game.player) {
+    return null;
+  }
   const tile = game.tiles?.[game.player?.row]?.[game.player?.col];
   if (!tile) {
     return null;
@@ -2611,6 +2926,43 @@ function createBlockSummary(block) {
     gameover: '밟으면 즉시 실패하는 위험 블록입니다.'
   };
   return effectLabels[block.effect] || '커스텀 규칙이 적용된 블록입니다.';
+}
+
+function formatBlockEffect(block) {
+  const labels = {
+    floor: '길',
+    wall: '벽',
+    slow: '느림',
+    bounce: '튕김',
+    goal: '목표',
+    key: '열쇠',
+    lock: '잠금',
+    force: `강제 이동 ${directionLabel(block.outDirection)}`,
+    oneway: `일방통행 ${directionLabel(block.outDirection)}`,
+    gameover: '게임오버'
+  };
+  return labels[block.effect] || block.effect;
+}
+
+function createBlockRuleSummary(block) {
+  const parts = [];
+  if (block.requires) {
+    parts.push('조건 필요');
+  }
+  if (block.rules?.length) {
+    parts.push(`if ${block.rules.length}개`);
+  }
+  if (block.spawn?.length) {
+    const delayed = block.spawn.some((item) => Number(item.afterSeconds || 0) > 0);
+    parts.push(delayed ? '시간 후 변화' : '블록 변화');
+  }
+  if (block.giveKey) {
+    parts.push('열쇠 지급');
+  }
+  if (block.takeKey) {
+    parts.push('열쇠 제거');
+  }
+  return parts.join(' · ');
 }
 
 function directionLabel(direction) {

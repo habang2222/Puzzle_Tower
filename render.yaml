@@ -17,6 +17,8 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: PASSWORD_RESET_EXPOSE_CODE
+        value: "false"
       - key: PUZZLE_TOWER_DATA_DIR
         value: /var/data
       - key: CLIENT_ORIGIN
