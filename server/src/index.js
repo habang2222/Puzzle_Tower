@@ -781,11 +781,26 @@ initDatabase().then(async () => {
   });
 });
 
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
   const providedToken = String(req.header('x-admin-token') || '').trim();
   if (providedToken !== adminToken) {
+    const bearerToken = getBearerToken(req);
+    if (bearerToken) {
+      try {
+        const payload = jwt.verify(bearerToken, jwtSecret);
+        const user = await getUserById(payload.sub);
+        if (user?.provider === 'admin') {
+          req.user = user;
+          next();
+          return;
+        }
+      } catch (error) {
+        // Fall through to the admin-token error below.
+      }
+    }
+
     const tokenHint = configuredAdminToken
-      ? 'Render Environment에 설정한 ADMIN_TOKEN 값을 입력하세요.'
+      ? 'Railway Variables에 설정한 ADMIN_TOKEN 값을 입력하거나 Admin 계정으로 로그인하세요.'
       : '현재 서버는 기본 관리자 토큰 admin123을 사용합니다.';
     res.status(401).json({ message: `관리자 토큰이 올바르지 않습니다. ${tokenHint}` });
     return;

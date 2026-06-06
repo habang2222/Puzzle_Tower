@@ -694,7 +694,7 @@ export default function App() {
     const token = adminToken.trim();
     const email = adminLoginForm.email.trim();
     if (!token) {
-      setAdminMessage('관리자 토큰을 입력하세요. Render Environment의 ADMIN_TOKEN 값이며, 비밀번호가 아닙니다. 설정하지 않았다면 admin123입니다.');
+      setAdminMessage('관리자 토큰을 입력하세요. Railway Variables의 ADMIN_TOKEN 값이며, 비밀번호가 아닙니다. 설정하지 않았다면 admin123입니다. Admin 계정으로 로그인했다면 토큰 없이도 관리자 API를 사용할 수 있습니다.');
       return;
     }
     if (!email || adminLoginForm.password.length < 6) {
@@ -1623,7 +1623,7 @@ export default function App() {
                 <input
                   id="admin-token"
                   onChange={(event) => setAdminToken(event.target.value)}
-                  placeholder="Render ADMIN_TOKEN 값. 설정하지 않았다면 admin123"
+                  placeholder="Railway ADMIN_TOKEN 값. Admin 로그인 후에는 비워도 됩니다."
                   type="password"
                   value={adminToken}
                 />

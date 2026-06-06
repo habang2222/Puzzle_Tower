@@ -18,8 +18,10 @@ const dataDir = path.resolve(
 );
 const dbPath = path.join(dataDir, 'puzzle-tower.sqlite');
 const postgresUrl = String(process.env.DATABASE_URL || process.env.DATABASE_PUBLIC_URL || '').trim();
+const postgresEnvConfig = createPostgresEnvConfig();
+const postgresConfigSource = postgresUrl ? 'url' : postgresEnvConfig ? 'pg-env' : '';
 const requestedDriver = String(process.env.DB_DRIVER || '').trim().toLowerCase();
-const usePostgres = Boolean(postgresUrl) && requestedDriver !== 'sqlite';
+const usePostgres = Boolean(postgresUrl || postgresEnvConfig) && requestedDriver !== 'sqlite';
 
 let db;
 let pool;
@@ -27,7 +29,7 @@ let pool;
 export async function initDatabase() {
   if (usePostgres) {
     pool = new Pool({
-      connectionString: postgresUrl,
+      ...getPostgresPoolConfig(),
       ssl: getPostgresSsl()
     });
     await pool.query('SELECT 1');
@@ -57,6 +59,7 @@ export function getStorageInfo() {
     return {
       driver: 'postgres',
       databaseConfigured: true,
+      postgresConfigSource,
       railway: Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID),
       railwayVolume: false,
       render: false,
@@ -84,6 +87,9 @@ export function getStorageInfo() {
 
   return {
     driver: 'sqlite',
+    databaseConfigured: Boolean(postgresUrl || postgresEnvConfig),
+    postgresConfigSource: postgresConfigSource || null,
+    postgresEnv: getPostgresEnvStatus(),
     dataDir,
     configuredDataDir: configuredDataDir || null,
     railway: isRailway,
@@ -453,4 +459,42 @@ function getPostgresSsl() {
     return { rejectUnauthorized: false };
   }
   return false;
+}
+
+function getPostgresPoolConfig() {
+  if (postgresUrl) {
+    return { connectionString: postgresUrl };
+  }
+  return postgresEnvConfig;
+}
+
+function createPostgresEnvConfig() {
+  const host = String(process.env.PGHOST || '').trim();
+  const database = String(process.env.PGDATABASE || process.env.POSTGRES_DB || '').trim();
+  const user = String(process.env.PGUSER || process.env.POSTGRES_USER || '').trim();
+  const password = String(process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD || '').trim();
+  const port = Number(process.env.PGPORT || 5432);
+
+  if (!host || !database || !user || !password) {
+    return null;
+  }
+
+  return {
+    host,
+    database,
+    user,
+    password,
+    port: Number.isFinite(port) ? port : 5432
+  };
+}
+
+function getPostgresEnvStatus() {
+  return {
+    databaseUrl: Boolean(postgresUrl),
+    pgHost: Boolean(process.env.PGHOST),
+    pgDatabase: Boolean(process.env.PGDATABASE || process.env.POSTGRES_DB),
+    pgUser: Boolean(process.env.PGUSER || process.env.POSTGRES_USER),
+    pgPassword: Boolean(process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD),
+    pgPort: Boolean(process.env.PGPORT)
+  };
 }

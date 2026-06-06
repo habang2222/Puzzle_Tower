@@ -97,7 +97,7 @@ DATABASE_URL=postgresql://user:password@host:port/database
 When `DATABASE_URL` is set, the backend uses Postgres. Without `DATABASE_URL`, `PUZZLE_TOWER_DATA_DIR` controls where `puzzle-tower.sqlite` is stored. Locally, the default is `server/data/`.
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 If environment variables are not available, open the in-app Admin screen, enter the admin setup token, Admin email, and Admin password, then press "Admin 로그인 설정".
-The admin setup token is `ADMIN_TOKEN`, not the Admin login password. If `ADMIN_TOKEN` is not set on the server, the current fallback token is `admin123`.
+The admin setup token is `ADMIN_TOKEN`, not the Admin login password. If `ADMIN_TOKEN` is not set on the server, the current fallback token is `admin123`. After logging in as the `Admin` account, admin APIs also accept the normal login JWT.
 Password reset codes are stored hashed and expire after 15 minutes. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` to send reset codes by email. For Gmail, use a Google App Password, not the normal Gmail password. Without an email provider, local/dev runs return the reset code for testing. On production, set `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
 
 ## API List
@@ -389,6 +389,7 @@ CLIENT_URL=https://habang2222.github.io/Puzzle_Tower/
 Railway Postgres mode:
 
 - If `DATABASE_URL` is present, the backend automatically uses Railway Postgres.
+- If `DATABASE_URL` is absent but Railway provides `PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`, the backend also uses Railway Postgres.
 - Users, passwords, maps, custom blocks, and rankings are saved in Postgres and remain after redeploys.
 - Keep `DATABASE_URL`, `PGHOST`, `PGUSER`, `PGPASSWORD`, and related variables inside Railway variables only. Do not commit them.
 

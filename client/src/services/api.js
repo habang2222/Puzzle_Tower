@@ -195,9 +195,14 @@ function adminRequest(path, method, body, token) {
 }
 
 function createAdminHeaders(token) {
-  return {
+  const headers = {
     'x-admin-token': String(token || '').trim()
   };
+  const authToken = getAuthToken();
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+  return headers;
 }
 
 function withQuery(path, filters = {}) {
