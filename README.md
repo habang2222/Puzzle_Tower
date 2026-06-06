@@ -6,7 +6,7 @@ Puzzle Tower is a full-stack web puzzle game. Players clear tile stages with a m
 
 - React + Vite frontend
 - Express backend API
-- SQLite database powered by `sql.js`
+- Railway Postgres in production, SQLite fallback for local development
 - 15 built-in stages
 - Increasing difficulty with walls, move limits, teleport tiles, keys, and locks
 - Local best record fallback
@@ -22,13 +22,13 @@ Puzzle Tower is a full-stack web puzzle game. Players clear tile stages with a m
 - Ranking save and lookup API
 - Admin stage CRUD API
 - Reserved Admin nickname protection with unicode/control-character filtering
-- Configurable SQLite data directory for persistent storage
+- Persistent DB storage with `DATABASE_URL` or configurable SQLite data directory
 - Responsive sticky game controls
 - Mouse hover tile descriptions
 - Input proof and rate checks for stronger macro-record blocking
 - AdSense slot integration
 - GitHub Pages deployment workflow for the frontend
-- Render-ready backend configuration
+- Render/Railway-ready backend configuration
 
 ## Project Structure
 
@@ -69,7 +69,7 @@ http://localhost:4000/api/health
 Create `client/.env` when the backend is deployed:
 
 ```env
-VITE_API_URL=https://puzzle-tower.onrender.com
+VITE_API_URL=https://YOUR-BACKEND-DOMAIN
 ```
 
 Create `server/.env` if you want to change server settings:
@@ -90,9 +90,11 @@ SMTP_USER=your-email@gmail.com
 SMTP_PASS=your-gmail-app-password
 SMTP_FROM=Puzzle Tower <your-email@gmail.com>
 PUZZLE_TOWER_DATA_DIR=./data
+# Production Postgres, usually provided by Railway.
+DATABASE_URL=postgresql://user:password@host:port/database
 ```
 
-`PUZZLE_TOWER_DATA_DIR` controls where `puzzle-tower.sqlite` is stored. Locally, the default is `server/data/`.
+When `DATABASE_URL` is set, the backend uses Postgres. Without `DATABASE_URL`, `PUZZLE_TOWER_DATA_DIR` controls where `puzzle-tower.sqlite` is stored. Locally, the default is `server/data/`.
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 If environment variables are not available, open the in-app Admin screen, enter the admin setup token, Admin email, and Admin password, then press "Admin 로그인 설정".
 The admin setup token is `ADMIN_TOKEN`, not the Admin login password. If `ADMIN_TOKEN` is not set on the server, the current fallback token is `admin123`.
@@ -334,7 +336,7 @@ Frontend URL format:
 https://habang2222.github.io/Puzzle_Tower/
 ```
 
-The frontend falls back to `https://puzzle-tower.onrender.com` on deployed pages. You can still override it with a repository variable or secret named `VITE_API_URL`.
+The frontend falls back to `https://puzzle-tower.onrender.com` on deployed pages. If the backend is moved to Railway, set the GitHub Pages build variable `VITE_API_URL` to the Railway public backend URL.
 
 ### Backend: Render
 
@@ -384,13 +386,29 @@ CLIENT_ORIGIN=https://habang2222.github.io
 CLIENT_URL=https://habang2222.github.io/Puzzle_Tower/
 ```
 
-Current backend storage mode is SQLite. To preserve data on Railway, attach a Volume to the `Puzzle_Tower` web service. The server will automatically use `RAILWAY_VOLUME_MOUNT_PATH` when Railway provides it. You can also set:
+Railway Postgres mode:
+
+- If `DATABASE_URL` is present, the backend automatically uses Railway Postgres.
+- Users, passwords, maps, custom blocks, and rankings are saved in Postgres and remain after redeploys.
+- Keep `DATABASE_URL`, `PGHOST`, `PGUSER`, `PGPASSWORD`, and related variables inside Railway variables only. Do not commit them.
+
+SQLite fallback mode:
+
+- If `DATABASE_URL` is not present, the backend uses SQLite.
+- To preserve SQLite data on Railway, attach a Volume to the `Puzzle_Tower` web service. The server will automatically use `RAILWAY_VOLUME_MOUNT_PATH` when Railway provides it. You can also set:
 
 ```env
 PUZZLE_TOWER_DATA_DIR=${{RAILWAY_VOLUME_MOUNT_PATH}}
 ```
 
-Railway Postgres is not automatically used by this SQLite backend. If you create a Postgres service, it can stay online, but the current backend will still use SQLite until the DB adapter is migrated to Postgres.
+After deploy, check:
+
+```text
+https://YOUR-RAILWAY-BACKEND-DOMAIN/api/health
+https://YOUR-RAILWAY-BACKEND-DOMAIN/api/storage/status
+```
+
+`/api/storage/status` should show `"driver": "postgres"` when Railway Postgres is active.
 
 ## Notes
 

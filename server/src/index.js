@@ -17,6 +17,20 @@ const recordRateLimitWindowMs = 10000;
 const recordRateLimitMax = 8;
 const recordRateLimits = new Map();
 
+const asyncHandler = (handler) => (req, res, next) => {
+  Promise.resolve(handler(req, res, next)).catch(next);
+};
+
+for (const method of ['get', 'post', 'put', 'delete']) {
+  const original = app[method].bind(app);
+  app[method] = (path, ...handlers) => {
+    if (handlers.length === 0) {
+      return original(path);
+    }
+    return original(path, ...handlers.map((handler) => asyncHandler(handler)));
+  };
+}
+
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '1mb' }));
 
@@ -53,12 +67,12 @@ app.post('/api/auth/register', async (req, res) => {
     return;
   }
 
-  if (get('SELECT id FROM users WHERE email = ?', [email])) {
+  if (await get('SELECT id FROM users WHERE email = ?', [email])) {
     res.status(409).json({ message: '이미 가입된 이메일입니다.' });
     return;
   }
 
-  if (get('SELECT id FROM users WHERE nickname_key = ? OR LOWER(nickname) = ?', [nicknameValidation.key, nicknameValidation.key])) {
+  if (await get('SELECT id FROM users WHERE nickname_key = ? OR LOWER(nickname) = ?', [nicknameValidation.key, nicknameValidation.key])) {
     res.status(409).json({ message: '이미 사용 중인 닉네임입니다.' });
     return;
   }
@@ -66,7 +80,7 @@ app.post('/api/auth/register', async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 10);
   let id;
   try {
-    id = insert(
+    id = await insert(
       `
       INSERT INTO users (nickname, nickname_key, email, password_hash, provider)
       VALUES (?, ?, ?, ?, 'local')
@@ -83,14 +97,14 @@ app.post('/api/auth/register', async (req, res) => {
     return;
   }
 
-  const user = getUserById(id);
+  const user = await getUserById(id);
   res.status(201).json({ token: createAuthToken(user), user: publicUser(user) });
 });
 
 app.post('/api/auth/login', async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
-  const user = get('SELECT * FROM users WHERE email = ?', [email]);
+  const user = await get('SELECT * FROM users WHERE email = ?', [email]);
 
   if (!user || !user.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
     res.status(401).json({ message: '이메일 또는 비밀번호가 올바르지 않습니다.' });
@@ -109,13 +123,13 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
     return;
   }
 
-  const user = get('SELECT * FROM users WHERE email = ?', [email]);
+  const user = await get('SELECT * FROM users WHERE email = ?', [email]);
   if (!user || !user.password_hash) {
     res.json({ message: genericMessage });
     return;
   }
 
-  const recent = get(
+  const recent = await get(
     `
     SELECT created_at
     FROM password_reset_tokens
@@ -132,8 +146,8 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
 
   const resetCode = String(randomInt(100000, 1000000));
   const tokenHash = await bcrypt.hash(resetCode, 10);
-  run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL', [user.id]);
-  insert(
+  await run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL', [user.id]);
+  await insert(
     `
     INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
     VALUES (?, ?, datetime('now', '+15 minutes'))
@@ -164,13 +178,13 @@ app.post('/api/auth/password-reset/confirm', async (req, res) => {
     return;
   }
 
-  const user = get('SELECT * FROM users WHERE email = ?', [email]);
+  const user = await get('SELECT * FROM users WHERE email = ?', [email]);
   if (!user || !user.password_hash) {
     res.status(400).json({ message: '재설정 코드가 올바르지 않거나 만료되었습니다.' });
     return;
   }
 
-  const tokens = all(
+  const tokens = await all(
     `
     SELECT *
     FROM password_reset_tokens
@@ -194,8 +208,8 @@ app.post('/api/auth/password-reset/confirm', async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, user.id]);
-  run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [matchedToken.id]);
+  await run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, user.id]);
+  await run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [matchedToken.id]);
   res.json({ message: '비밀번호가 변경되었습니다. 새 비밀번호로 로그인하세요.' });
 });
 
@@ -203,9 +217,9 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
   res.json({ user: publicUser(req.user) });
 });
 
-app.get('/api/stages', (req, res) => {
+app.get('/api/stages', async (req, res) => {
   const filters = createSearchFilters(req.query, 's', 'u');
-  const stages = all(
+  const stages = (await all(
     `
     SELECT s.*, u.nickname AS creator_nickname
     FROM stages s
@@ -215,12 +229,12 @@ app.get('/api/stages', (req, res) => {
     ORDER BY s.is_official DESC, s.level ASC
     `,
     filters.params
-  ).map(toStage);
+  )).map(toStage);
   res.json(stages);
 });
 
-app.get('/api/stages/:level', (req, res) => {
-  const stage = get(
+app.get('/api/stages/:level', async (req, res) => {
+  const stage = await get(
     `
     SELECT s.*, u.nickname AS creator_nickname
     FROM stages s
@@ -236,9 +250,9 @@ app.get('/api/stages/:level', (req, res) => {
   res.json(toStage(stage));
 });
 
-app.get('/api/community/stages', (req, res) => {
+app.get('/api/community/stages', async (req, res) => {
   const filters = createSearchFilters(req.query, 's', 'u');
-  const stages = all(
+  const stages = (await all(
     `
     SELECT
       s.*,
@@ -249,16 +263,16 @@ app.get('/api/community/stages', (req, res) => {
     LEFT JOIN records r ON r.stage_id = s.id
     WHERE s.is_official = 0 AND s.is_public = 1
       ${filters.where}
-    GROUP BY s.id
+    GROUP BY s.id, u.nickname
     ORDER BY s.created_at DESC
     `,
     filters.params
-  ).map(toStage);
+  )).map(toStage);
   res.json(stages);
 });
 
-app.get('/api/me/stages', requireAuth, (req, res) => {
-  const stages = all(
+app.get('/api/me/stages', requireAuth, async (req, res) => {
+  const stages = (await all(
     `
     SELECT s.*, u.nickname AS creator_nickname
     FROM stages s
@@ -267,13 +281,13 @@ app.get('/api/me/stages', requireAuth, (req, res) => {
     ORDER BY s.created_at DESC
     `,
     [req.user.id]
-  ).map(toStage);
+  )).map(toStage);
   res.json(stages);
 });
 
-app.get('/api/blocks', (req, res) => {
+app.get('/api/blocks', async (req, res) => {
   const filters = createSearchFilters(req.query, 'b', 'u');
-  const blocks = all(
+  const blocks = (await all(
     `
     SELECT b.*, u.nickname AS creator_nickname
     FROM custom_blocks b
@@ -283,12 +297,12 @@ app.get('/api/blocks', (req, res) => {
     ORDER BY b.downloads DESC, b.created_at DESC
     `,
     filters.params
-  ).map(toCustomBlock);
+  )).map(toCustomBlock);
   res.json(blocks);
 });
 
-app.get('/api/me/blocks', requireAuth, (req, res) => {
-  const blocks = all(
+app.get('/api/me/blocks', requireAuth, async (req, res) => {
+  const blocks = (await all(
     `
     SELECT b.*, u.nickname AS creator_nickname
     FROM custom_blocks b
@@ -297,11 +311,11 @@ app.get('/api/me/blocks', requireAuth, (req, res) => {
     ORDER BY b.created_at DESC
     `,
     [req.user.id]
-  ).map(toCustomBlock);
+  )).map(toCustomBlock);
   res.json(blocks);
 });
 
-app.post('/api/blocks', requireAuth, (req, res) => {
+app.post('/api/blocks', requireAuth, async (req, res) => {
   const validation = validateCustomBlockPayload(req.body);
   if (!validation.ok) {
     res.status(400).json({ message: validation.message });
@@ -309,7 +323,7 @@ app.post('/api/blocks', requireAuth, (req, res) => {
   }
 
   const block = validation.block;
-  const id = insert(
+  const id = await insert(
     `
     INSERT INTO custom_blocks (user_id, name, tile, color, effect, tags, move_cost, message, code_data, is_public)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -328,12 +342,12 @@ app.post('/api/blocks', requireAuth, (req, res) => {
     ]
   );
 
-  res.status(201).json(toCustomBlock(getCustomBlockById(id)));
+  res.status(201).json(toCustomBlock(await getCustomBlockById(id)));
 });
 
-app.put('/api/blocks/:id', requireAuth, (req, res) => {
+app.put('/api/blocks/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);
-  const existing = get('SELECT * FROM custom_blocks WHERE id = ?', [id]);
+  const existing = await get('SELECT * FROM custom_blocks WHERE id = ?', [id]);
   if (!existing) {
     res.status(404).json({ message: '커스텀 블록을 찾을 수 없습니다.' });
     return;
@@ -350,7 +364,7 @@ app.put('/api/blocks/:id', requireAuth, (req, res) => {
   }
 
   const block = validation.block;
-  run(
+  await run(
     `
     UPDATE custom_blocks
     SET name = ?, tile = ?, color = ?, effect = ?, tags = ?, move_cost = ?, message = ?, code_data = ?, is_public = ?, updated_at = CURRENT_TIMESTAMP
@@ -370,12 +384,12 @@ app.put('/api/blocks/:id', requireAuth, (req, res) => {
     ]
   );
 
-  res.json(toCustomBlock(getCustomBlockById(id)));
+  res.json(toCustomBlock(await getCustomBlockById(id)));
 });
 
-app.delete('/api/blocks/:id', requireAuth, (req, res) => {
+app.delete('/api/blocks/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);
-  const existing = get('SELECT * FROM custom_blocks WHERE id = ?', [id]);
+  const existing = await get('SELECT * FROM custom_blocks WHERE id = ?', [id]);
   if (!existing) {
     res.status(404).json({ message: '커스텀 블록을 찾을 수 없습니다.' });
     return;
@@ -385,23 +399,23 @@ app.delete('/api/blocks/:id', requireAuth, (req, res) => {
     return;
   }
 
-  run('DELETE FROM custom_blocks WHERE id = ?', [id]);
+  await run('DELETE FROM custom_blocks WHERE id = ?', [id]);
   res.json({ ok: true });
 });
 
-app.post('/api/blocks/:id/download', (req, res) => {
+app.post('/api/blocks/:id/download', async (req, res) => {
   const id = Number(req.params.id);
-  const existing = getCustomBlockById(id);
+  const existing = await getCustomBlockById(id);
   if (!existing || existing.is_public === 0) {
     res.status(404).json({ message: '공개 블록을 찾을 수 없습니다.' });
     return;
   }
 
-  run('UPDATE custom_blocks SET downloads = downloads + 1 WHERE id = ?', [id]);
-  res.json(toCustomBlock(getCustomBlockById(id)));
+  await run('UPDATE custom_blocks SET downloads = downloads + 1 WHERE id = ?', [id]);
+  res.json(toCustomBlock(await getCustomBlockById(id)));
 });
 
-app.post('/api/community/stages', requireAuth, (req, res) => {
+app.post('/api/community/stages', requireAuth, async (req, res) => {
   const validation = validateStagePayload(req.body, { requireLevel: false });
   if (!validation.ok) {
     res.status(400).json({ message: validation.message });
@@ -414,8 +428,8 @@ app.post('/api/community/stages', requireAuth, (req, res) => {
     return;
   }
 
-  const generatedLevel = get('SELECT COALESCE(MAX(level), 999) + 1 AS level FROM stages WHERE is_official = 0 OR level >= 1000').level;
-  const id = insert(
+  const generatedLevel = (await get('SELECT COALESCE(MAX(level), 999) + 1 AS level FROM stages WHERE is_official = 0 OR level >= 1000')).level;
+  const id = await insert(
     `
     INSERT INTO stages (level, title, board_data, move_limit, difficulty, tags, creator_id, is_official, is_public, creator_clear_verified)
     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1)
@@ -431,13 +445,13 @@ app.post('/api/community/stages', requireAuth, (req, res) => {
     ]
   );
 
-  const stage = getStageById(id);
+  const stage = await getStageById(id);
   res.status(201).json(toStage(stage));
 });
 
-app.put('/api/community/stages/:id', requireAuth, (req, res) => {
+app.put('/api/community/stages/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);
-  const existing = get('SELECT * FROM stages WHERE id = ? AND is_official = 0', [id]);
+  const existing = await get('SELECT * FROM stages WHERE id = ? AND is_official = 0', [id]);
 
   if (!existing) {
     res.status(404).json({ message: '커뮤니티 맵을 찾을 수 없습니다.' });
@@ -460,7 +474,7 @@ app.put('/api/community/stages/:id', requireAuth, (req, res) => {
     return;
   }
 
-  run(
+  await run(
     `
     UPDATE stages
     SET title = ?, board_data = ?, move_limit = ?, difficulty = ?, tags = ?, is_public = ?, creator_clear_verified = 1, updated_at = CURRENT_TIMESTAMP
@@ -477,12 +491,12 @@ app.put('/api/community/stages/:id', requireAuth, (req, res) => {
     ]
   );
 
-  res.json(toStage(getStageById(id)));
+  res.json(toStage(await getStageById(id)));
 });
 
-app.delete('/api/community/stages/:id', requireAuth, (req, res) => {
+app.delete('/api/community/stages/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);
-  const existing = get('SELECT * FROM stages WHERE id = ? AND is_official = 0', [id]);
+  const existing = await get('SELECT * FROM stages WHERE id = ? AND is_official = 0', [id]);
 
   if (!existing) {
     res.status(404).json({ message: '커뮤니티 맵을 찾을 수 없습니다.' });
@@ -493,12 +507,12 @@ app.delete('/api/community/stages/:id', requireAuth, (req, res) => {
     return;
   }
 
-  run('DELETE FROM records WHERE stage_id = ?', [id]);
-  run('DELETE FROM stages WHERE id = ?', [id]);
+  await run('DELETE FROM records WHERE stage_id = ?', [id]);
+  await run('DELETE FROM stages WHERE id = ?', [id]);
   res.json({ ok: true });
 });
 
-app.post('/api/records', optionalAuth, (req, res) => {
+app.post('/api/records', optionalAuth, async (req, res) => {
   const body = req.body || {};
   const nicknameValue = String(req.user?.nickname || body.nickname || '');
   const nicknameValidation = validateNicknameInput(nicknameValue, { allowAdmin: req.user?.provider === 'admin' });
@@ -516,7 +530,7 @@ app.post('/api/records', optionalAuth, (req, res) => {
     return;
   }
 
-  const stage = get('SELECT * FROM stages WHERE id = ? AND (is_official = 1 OR is_public = 1)', [stageId]);
+  const stage = await get('SELECT * FROM stages WHERE id = ? AND (is_official = 1 OR is_public = 1)', [stageId]);
   if (!stage) {
     res.status(404).json({ message: '스테이지를 찾을 수 없습니다.' });
     return;
@@ -538,13 +552,13 @@ app.post('/api/records', optionalAuth, (req, res) => {
     return;
   }
 
-  const existingNicknameOwner = get('SELECT id, provider FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
+  const existingNicknameOwner = await get('SELECT id, provider FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
   if (!req.user && existingNicknameOwner && existingNicknameOwner.provider !== 'guest') {
     res.status(401).json({ message: '등록된 닉네임으로 기록을 저장하려면 로그인해야 합니다.' });
     return;
   }
 
-  const userId = req.user?.id || findOrCreateUser(nicknameValidation);
+  const userId = req.user?.id || (await findOrCreateUser(nicknameValidation));
   const rateLimit = checkRecordRateLimit(req, userId);
   if (!rateLimit.ok) {
     res.status(429).json({ message: rateLimit.message });
@@ -553,20 +567,20 @@ app.post('/api/records', optionalAuth, (req, res) => {
 
   const normalizedClearTime = Number(clearTime.toFixed(4));
   const score = calculateScore(stage.level, stage.move_limit, normalizedClearTime, moveUsed);
-  const existingRecord = get('SELECT * FROM records WHERE user_id = ? AND stage_id = ?', [userId, stageId]);
+  const existingRecord = await get('SELECT * FROM records WHERE user_id = ? AND stage_id = ?', [userId, stageId]);
   let saved;
 
   if (!existingRecord) {
-    const id = insert(
+    const id = await insert(
       `
       INSERT INTO records (user_id, stage_id, clear_time, move_used, score)
       VALUES (?, ?, ?, ?, ?)
       `,
       [userId, stageId, normalizedClearTime, moveUsed, score]
     );
-    saved = getRecordById(id);
+    saved = await getRecordById(id);
   } else if (isBetterRecord({ score, clear_time: normalizedClearTime, move_used: moveUsed }, existingRecord)) {
-    run(
+    await run(
       `
       UPDATE records
       SET clear_time = ?, move_used = ?, score = ?, created_at = CURRENT_TIMESTAMP
@@ -574,21 +588,21 @@ app.post('/api/records', optionalAuth, (req, res) => {
       `,
       [normalizedClearTime, moveUsed, score, existingRecord.id]
     );
-    saved = getRecordById(existingRecord.id);
+    saved = await getRecordById(existingRecord.id);
   } else {
-    saved = getRecordById(existingRecord.id);
+    saved = await getRecordById(existingRecord.id);
   }
 
   res.status(201).json(saved);
 });
 
-app.get('/api/rankings', (req, res) => {
+app.get('/api/rankings', async (req, res) => {
   const limit = clamp(Number(req.query.limit || 20), 1, 100);
   const stageId = req.query.stageId ? Number(req.query.stageId) : null;
   const params = stageId ? [stageId, limit] : [limit];
   const filter = stageId ? 'WHERE r.stage_id = ?' : '';
 
-  const rankings = all(
+  const rankings = await all(
     `
     SELECT
       r.id,
@@ -614,9 +628,9 @@ app.get('/api/rankings', (req, res) => {
   res.json(rankings);
 });
 
-app.get('/api/users/:nickname/best', (req, res) => {
+app.get('/api/users/:nickname/best', async (req, res) => {
   const nicknameKey = createNicknameKey(req.params.nickname || '');
-  const rows = all(
+  const rows = await all(
     `
     SELECT
       r.id,
@@ -664,7 +678,7 @@ app.post('/api/admin/login', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/admin/stages', requireAdmin, (req, res) => {
+app.post('/api/admin/stages', requireAdmin, async (req, res) => {
   const validation = validateStagePayload(req.body);
   if (!validation.ok) {
     res.status(400).json({ message: validation.message });
@@ -673,8 +687,8 @@ app.post('/api/admin/stages', requireAdmin, (req, res) => {
 
   try {
     const payload = validation.stage;
-    const adminId = getAdminUserId();
-    const id = insert(
+    const adminId = await getAdminUserId();
+    const id = await insert(
       `
       INSERT INTO stages (level, title, board_data, move_limit, difficulty, tags, creator_id, is_official, is_public, creator_clear_verified)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
@@ -689,13 +703,13 @@ app.post('/api/admin/stages', requireAdmin, (req, res) => {
         adminId
       ]
     );
-    res.status(201).json(toStage(getStageById(id)));
+    res.status(201).json(toStage(await getStageById(id)));
   } catch (error) {
     res.status(409).json({ message: '이미 존재하는 레벨입니다.' });
   }
 });
 
-app.put('/api/admin/stages/:id', requireAdmin, (req, res) => {
+app.put('/api/admin/stages/:id', requireAdmin, async (req, res) => {
   const validation = validateStagePayload(req.body);
   const id = Number(req.params.id);
 
@@ -704,7 +718,7 @@ app.put('/api/admin/stages/:id', requireAdmin, (req, res) => {
     return;
   }
 
-  const existing = get('SELECT * FROM stages WHERE id = ?', [id]);
+  const existing = await get('SELECT * FROM stages WHERE id = ?', [id]);
   if (!existing) {
     res.status(404).json({ message: '스테이지를 찾을 수 없습니다.' });
     return;
@@ -712,7 +726,7 @@ app.put('/api/admin/stages/:id', requireAdmin, (req, res) => {
 
   try {
     const payload = validation.stage;
-    run(
+    await run(
       `
       UPDATE stages
       SET level = ?, title = ?, board_data = ?, move_limit = ?, difficulty = ?, tags = ?, updated_at = CURRENT_TIMESTAMP
@@ -728,27 +742,36 @@ app.put('/api/admin/stages/:id', requireAdmin, (req, res) => {
         id
       ]
     );
-    res.json(toStage(getStageById(id)));
+    res.json(toStage(await getStageById(id)));
   } catch (error) {
     res.status(409).json({ message: '이미 존재하는 레벨입니다.' });
   }
 });
 
-app.delete('/api/admin/stages/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/stages/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  const existing = get('SELECT * FROM stages WHERE id = ?', [id]);
+  const existing = await get('SELECT * FROM stages WHERE id = ?', [id]);
   if (!existing) {
     res.status(404).json({ message: '스테이지를 찾을 수 없습니다.' });
     return;
   }
 
-  run('DELETE FROM records WHERE stage_id = ?', [id]);
-  run('DELETE FROM stages WHERE id = ?', [id]);
+  await run('DELETE FROM records WHERE stage_id = ?', [id]);
+  await run('DELETE FROM stages WHERE id = ?', [id]);
   res.json({ ok: true });
 });
 
 app.use((req, res) => {
   res.status(404).json({ message: 'API 경로를 찾을 수 없습니다.' });
+});
+
+app.use((error, req, res, next) => {
+  console.error(error);
+  if (res.headersSent) {
+    next(error);
+    return;
+  }
+  res.status(500).json({ message: '서버 처리 중 오류가 발생했습니다.' });
 });
 
 initDatabase().then(async () => {
@@ -770,7 +793,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function optionalAuth(req, res, next) {
+async function optionalAuth(req, res, next) {
   const token = getBearerToken(req);
   if (!token) {
     next();
@@ -779,7 +802,7 @@ function optionalAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, jwtSecret);
-    const user = getUserById(payload.sub);
+    const user = await getUserById(payload.sub);
     if (user) {
       req.user = user;
     }
@@ -789,7 +812,7 @@ function optionalAuth(req, res, next) {
   next();
 }
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const token = getBearerToken(req);
   if (!token) {
     res.status(401).json({ message: '로그인이 필요합니다.' });
@@ -798,7 +821,7 @@ function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, jwtSecret);
-    const user = getUserById(payload.sub);
+    const user = await getUserById(payload.sub);
     if (!user) {
       res.status(401).json({ message: '사용자를 찾을 수 없습니다.' });
       return;
@@ -815,20 +838,20 @@ function getBearerToken(req) {
   return header.startsWith('Bearer ') ? header.slice(7) : '';
 }
 
-function findOrCreateUser(nicknameValidation) {
-  const existing = get('SELECT id FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
+async function findOrCreateUser(nicknameValidation) {
+  const existing = await get('SELECT id FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
   if (existing) {
     return existing.id;
   }
   try {
-    return insert('INSERT INTO users (nickname, nickname_key, provider) VALUES (?, ?, ?)', [
+    return await insert('INSERT INTO users (nickname, nickname_key, provider) VALUES (?, ?, ?)', [
       nicknameValidation.nickname,
       nicknameValidation.key,
       'guest'
     ]);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
-      const createdByParallelRequest = get('SELECT id FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
+      const createdByParallelRequest = await get('SELECT id FROM users WHERE nickname_key = ?', [nicknameValidation.key]);
       if (createdByParallelRequest) {
         return createdByParallelRequest.id;
       }
@@ -841,12 +864,12 @@ function isUniqueConstraintError(error) {
   return /unique|constraint/i.test(String(error?.message || error));
 }
 
-function getUserById(id) {
-  return get('SELECT * FROM users WHERE id = ?', [Number(id)]);
+async function getUserById(id) {
+  return await get('SELECT * FROM users WHERE id = ?', [Number(id)]);
 }
 
-function getStageById(id) {
-  return get(
+async function getStageById(id) {
+  return await get(
     `
     SELECT s.*, u.nickname AS creator_nickname
     FROM stages s
@@ -857,8 +880,8 @@ function getStageById(id) {
   );
 }
 
-function getCustomBlockById(id) {
-  return get(
+async function getCustomBlockById(id) {
+  return await get(
     `
     SELECT b.*, u.nickname AS creator_nickname
     FROM custom_blocks b
@@ -869,8 +892,8 @@ function getCustomBlockById(id) {
   );
 }
 
-function getAdminUserId() {
-  const admin = get('SELECT id FROM users WHERE nickname_key = ?', ['admin']);
+async function getAdminUserId() {
+  const admin = await get('SELECT id FROM users WHERE nickname_key = ?', ['admin']);
   return admin?.id || null;
 }
 
@@ -890,47 +913,47 @@ async function ensureConfiguredAdminLogin() {
 }
 
 async function setAdminLogin(adminEmail, adminPassword) {
-  const admin = get('SELECT * FROM users WHERE nickname_key = ?', ['admin']);
+  const admin = await get('SELECT * FROM users WHERE nickname_key = ?', ['admin']);
   if (!admin) {
     throw new Error('Admin 계정을 찾을 수 없습니다.');
   }
 
   const passwordHash = await bcrypt.hash(adminPassword, 10);
-  const emailOwner = get('SELECT * FROM users WHERE email = ?', [adminEmail]);
+  const emailOwner = await get('SELECT * FROM users WHERE email = ?', [adminEmail]);
 
   if (emailOwner && emailOwner.id !== admin.id) {
-    const fallback = findAvailableFallbackNickname(admin.id);
-    run('UPDATE stages SET creator_id = ? WHERE creator_id = ?', [emailOwner.id, admin.id]);
-    run('UPDATE users SET nickname = ?, nickname_key = ?, email = NULL, provider = ? WHERE id = ?', [
+    const fallback = await findAvailableFallbackNickname(admin.id);
+    await run('UPDATE stages SET creator_id = ? WHERE creator_id = ?', [emailOwner.id, admin.id]);
+    await run('UPDATE users SET nickname = ?, nickname_key = ?, email = NULL, provider = ? WHERE id = ?', [
       fallback.nickname,
       fallback.key,
       'guest',
       admin.id
     ]);
-    run('UPDATE users SET nickname = ?, nickname_key = ?, password_hash = ?, provider = ? WHERE id = ?', [
+    await run('UPDATE users SET nickname = ?, nickname_key = ?, password_hash = ?, provider = ? WHERE id = ?', [
       'Admin',
       'admin',
       passwordHash,
       'admin',
       emailOwner.id
     ]);
-    return getUserById(emailOwner.id);
+    return await getUserById(emailOwner.id);
   }
 
-  run('UPDATE users SET email = ?, password_hash = ?, provider = ? WHERE id = ?', [
+  await run('UPDATE users SET email = ?, password_hash = ?, provider = ? WHERE id = ?', [
     adminEmail,
     passwordHash,
     'admin',
     admin.id
   ]);
-  return getUserById(admin.id);
+  return await getUserById(admin.id);
 }
 
-function findAvailableFallbackNickname(userId) {
+async function findAvailableFallbackNickname(userId) {
   for (let index = 0; index < 1000; index += 1) {
     const nickname = index === 0 ? `player${userId}` : `player${userId}x${index}`;
     const key = createNicknameKey(nickname);
-    const taken = get('SELECT id FROM users WHERE nickname_key = ? AND id != ?', [key, userId]);
+    const taken = await get('SELECT id FROM users WHERE nickname_key = ? AND id != ?', [key, userId]);
     if (!taken) {
       return { nickname, key };
     }
@@ -1002,8 +1025,8 @@ function publicUser(user) {
   };
 }
 
-function getRecordById(id) {
-  return get(
+async function getRecordById(id) {
+  return await get(
     `
     SELECT
       r.id,
