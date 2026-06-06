@@ -97,7 +97,7 @@ DATABASE_URL=postgresql://user:password@host:port/database
 When `DATABASE_URL` is set, the backend uses Postgres. Without `DATABASE_URL`, `PUZZLE_TOWER_DATA_DIR` controls where `puzzle-tower.sqlite` is stored. Locally, the default is `server/data/`.
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 If environment variables are not available, open the in-app Admin screen, enter the admin setup token, Admin email, and Admin password, then press "Admin 로그인 설정".
-The admin setup token is `ADMIN_TOKEN`, not the Admin login password. If `ADMIN_TOKEN` is not set on the server, the current fallback token is `admin123`. After logging in as the `Admin` account, admin APIs also accept the normal login JWT.
+The admin setup token is `ADMIN_TOKEN`, not the Admin login password. The `admin123` fallback is available only on local non-production runs. On Railway/production, set `ADMIN_TOKEN` explicitly or log in as the `Admin` account; admin APIs also accept the normal Admin login JWT.
 Password reset codes are stored hashed and expire after 15 minutes. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` to send reset codes by email. For Gmail, use a Google App Password, not the normal Gmail password. Without an email provider, local/dev runs return the reset code for testing. On production, set `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
 
 ## API List

@@ -11,7 +11,9 @@ import { createNicknameKey, parseTags, sanitizeDisplayText, validateNicknameInpu
 const app = express();
 const port = Number(process.env.PORT || 4000);
 const configuredAdminToken = String(process.env.ADMIN_TOKEN || '').trim();
-const adminToken = configuredAdminToken || 'admin123';
+const isProductionDeployment = process.env.NODE_ENV === 'production' || Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RENDER);
+const adminTokenFallbackEnabled = !configuredAdminToken && !isProductionDeployment;
+const adminToken = configuredAdminToken || (adminTokenFallbackEnabled ? 'admin123' : '');
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-me';
 const recordRateLimitWindowMs = 10000;
 const recordRateLimitMax = 8;
@@ -783,7 +785,7 @@ initDatabase().then(async () => {
 
 async function requireAdmin(req, res, next) {
   const providedToken = String(req.header('x-admin-token') || '').trim();
-  if (providedToken !== adminToken) {
+  if (!adminToken || providedToken !== adminToken) {
     const bearerToken = getBearerToken(req);
     if (bearerToken) {
       try {
@@ -801,7 +803,9 @@ async function requireAdmin(req, res, next) {
 
     const tokenHint = configuredAdminToken
       ? 'Railway Variables에 설정한 ADMIN_TOKEN 값을 입력하거나 Admin 계정으로 로그인하세요.'
-      : '현재 서버는 기본 관리자 토큰 admin123을 사용합니다.';
+      : adminTokenFallbackEnabled
+      ? '로컬 개발 서버는 기본 관리자 토큰 admin123을 사용합니다.'
+      : '운영 서버에는 ADMIN_TOKEN이 설정되어 있지 않습니다. Railway Variables에 ADMIN_TOKEN을 설정하거나 Admin 계정으로 로그인하세요.';
     res.status(401).json({ message: `관리자 토큰이 올바르지 않습니다. ${tokenHint}` });
     return;
   }
