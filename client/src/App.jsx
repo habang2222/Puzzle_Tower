@@ -2381,6 +2381,16 @@ function CommunityStagePanel({
   textOnly = false,
   user
 }) {
+  const chatLogRef = useRef(null);
+  const orderedComments = [...comments].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  useEffect(() => {
+    if (!chatLogRef.current) {
+      return;
+    }
+    chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight;
+  }, [orderedComments.length, stage.id]);
+
   return (
     <aside className="community-panel" aria-label={`${stage.title} 커뮤니티`}>
       <div className="community-panel-header">
@@ -2421,18 +2431,19 @@ function CommunityStagePanel({
         </span>
       </div>
       {message && <p className="admin-message">{message}</p>}
-      <div className="chat-log" aria-label="댓글 채팅">
+      <div className="chat-log" aria-label="댓글 채팅" ref={chatLogRef}>
         {comments.length === 0 ? (
           <p className="chat-empty">아직 메시지가 없습니다.</p>
         ) : (
-          comments.map((comment) => (
-            <article className={comment.userId === user?.id ? 'chat-message mine' : 'chat-message'} key={comment.id}>
-              <div className="chat-bubble">
-                <div className="chat-meta">
-                  <strong>{comment.authorNickname}</strong>
-                  <span>{formatDateTime(comment.createdAt)}</span>
-                </div>
-                <p>{comment.body}</p>
+          orderedComments.map((comment) => (
+            <article className={comment.userId === user?.id ? 'chat-line mine' : 'chat-line'} key={comment.id}>
+              <p>
+                <strong>{comment.authorNickname}</strong>
+                <span className="chat-colon">:</span>
+                <span>{comment.body}</span>
+              </p>
+              <div className="chat-line-meta">
+                <span>{formatDateTime(comment.createdAt)}</span>
                 <button onClick={() => onReport(comment)} type="button">
                   {textOnly ? '신고' : (
                     <>

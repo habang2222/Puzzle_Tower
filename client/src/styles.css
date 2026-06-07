@@ -567,7 +567,7 @@ h3 {
 .chat-log {
   max-height: min(58vh, 520px);
   min-height: 180px;
-  align-content: end;
+  align-content: start;
   overflow: auto;
   padding: 12px;
   border: 1px solid #2c3440;
@@ -585,54 +585,53 @@ h3 {
   color: var(--text-soft);
 }
 
-.chat-message {
-  display: flex;
-  justify-content: flex-start;
-}
-
-.chat-message.mine {
-  justify-content: flex-end;
-}
-
-.chat-bubble {
+.chat-line {
   display: grid;
+  gap: 3px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(52, 59, 70, 0.42);
+}
+
+.chat-line:last-child {
+  border-bottom: 0;
+}
+
+.chat-line p {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
   gap: 6px;
-  width: fit-content;
-  max-width: min(72%, 620px);
-  padding: 10px 12px;
-  border: 1px solid #2c3440;
-  border-radius: 8px;
-  background: #11161d;
-}
-
-.chat-message.mine .chat-bubble {
-  border-color: rgba(66, 242, 155, 0.35);
-  background: rgba(66, 242, 155, 0.1);
-}
-
-.chat-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.chat-meta strong {
-  color: #fff;
-}
-
-.chat-meta span {
-  color: var(--text-soft);
-  font-size: 0.78rem;
-}
-
-.chat-bubble p {
+  align-items: baseline;
   margin: 0;
-  overflow-wrap: anywhere;
   line-height: 1.5;
 }
 
-.chat-bubble button {
-  justify-self: start;
+.chat-line strong {
+  color: #fff;
+  font-size: 0.94rem;
+}
+
+.chat-line.mine strong {
+  color: var(--green);
+}
+
+.chat-colon {
+  color: var(--text-soft);
+}
+
+.chat-line p span:last-child {
+  overflow-wrap: anywhere;
+}
+
+.chat-line-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 0;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+}
+
+.chat-line-meta button {
   min-height: auto;
   padding: 0;
   border: 0;
@@ -641,11 +640,7 @@ h3 {
   font-size: 0.78rem;
 }
 
-.chat-message.mine .chat-bubble button {
-  justify-self: end;
-}
-
-.chat-bubble button:hover {
+.chat-line-meta button:hover {
   transform: none;
   color: var(--cyan);
 }
@@ -1720,10 +1715,6 @@ h3 {
   .community-text-item,
   .report-item {
     grid-template-columns: 1fr;
-  }
-
-  .chat-bubble {
-    max-width: 88%;
   }
 
   .chat-composer button {
