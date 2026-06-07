@@ -43,6 +43,7 @@ import { fallbackStages } from './data/stages.js';
 import { calculateScore, createInitialGame, movePlayer, tickGame } from './game/engine.js';
 import {
   confirmPasswordReset,
+  createCommunityMessage,
   createStageComment,
   configureAdminLogin,
   createStage,
@@ -52,6 +53,7 @@ import {
   deleteCustomBlock,
   deleteStage,
   downloadCustomBlock,
+  fetchCommunityMessages,
   fetchCommunityStages,
   fetchHealth,
   fetchMe,
@@ -150,6 +152,9 @@ export default function App() {
   const [communityStages, setCommunityStages] = useState([]);
   const [communitySearch, setCommunitySearch] = useState({ q: '', creator: '', tag: '', sort: 'recent' });
   const [communityMessage, setCommunityMessage] = useState('');
+  const [communityMessages, setCommunityMessages] = useState([]);
+  const [communityChatDraft, setCommunityChatDraft] = useState('');
+  const [communityChatMessage, setCommunityChatMessage] = useState('');
   const [blockSearch, setBlockSearch] = useState({ q: '', creator: '', tag: '' });
   const [myStages, setMyStages] = useState([]);
   const [customBlocks, setCustomBlocks] = useState(() => loadLocalBlocks());
@@ -597,6 +602,44 @@ export default function App() {
     } catch (error) {
       setCommunityStages([]);
       setCommunityMessage(error.message);
+      setApiOnline(false);
+    }
+  };
+
+  const loadCommunityMessages = async () => {
+    try {
+      const messages = await fetchCommunityMessages();
+      setCommunityMessages(messages);
+      setCommunityChatMessage('');
+      setApiOnline(true);
+    } catch (error) {
+      setCommunityChatMessage(error.message);
+      setApiOnline(false);
+    }
+  };
+
+  const refreshCommunity = async (filters = communitySearch) => {
+    await Promise.allSettled([loadCommunityStages(filters), loadCommunityMessages()]);
+  };
+
+  const submitCommunityMessage = async () => {
+    if (!user) {
+      setCommunityChatMessage('로그인 후 공용 채팅에 참여할 수 있습니다.');
+      return;
+    }
+    if (!communityChatDraft.trim()) {
+      setCommunityChatMessage('메시지를 입력하세요.');
+      return;
+    }
+
+    try {
+      const message = await createCommunityMessage(communityChatDraft);
+      setCommunityMessages((current) => [...current, message].slice(-100));
+      setCommunityChatDraft('');
+      setCommunityChatMessage('');
+      setApiOnline(true);
+    } catch (error) {
+      setCommunityChatMessage(error.message);
       setApiOnline(false);
     }
   };
@@ -1139,7 +1182,7 @@ export default function App() {
             className={view === 'community' ? 'active' : ''}
             onClick={() => {
               setView('community');
-              loadCommunityStages();
+              refreshCommunity();
             }}
             type="button"
           >
@@ -1486,7 +1529,7 @@ export default function App() {
                 <h2>커뮤니티</h2>
               </div>
               <div className="hero-actions">
-                <button onClick={() => loadCommunityStages()} type="button">
+                <button onClick={() => refreshCommunity()} type="button">
                   <ListRestart size={17} />
                   <span>새로고침</span>
                 </button>
@@ -1542,6 +1585,15 @@ export default function App() {
                 <span>초기화</span>
               </button>
             </div>
+            <CommunityGlobalChat
+              draft={communityChatDraft}
+              message={communityChatMessage}
+              messages={communityMessages}
+              onDraftChange={setCommunityChatDraft}
+              onRefresh={loadCommunityMessages}
+              onSubmit={submitCommunityMessage}
+              user={user}
+            />
             <p className="result-count">커뮤니티 맵 {communityStages.length}개</p>
             {communityMessage && <p className="admin-message">{communityMessage}</p>}
             <div className="community-text-list">
@@ -1560,7 +1612,7 @@ export default function App() {
                       제작자 {stage.creatorNickname || '알 수 없음'} · 난이도 {stage.difficulty} · 이동 {stage.moveLimit} · 크기 {stage.board.length} x {stage.board[0]?.length || 0}
                     </p>
                     <p>
-                      좋아요 {stage.likeCount || 0} · 싫어요 {stage.dislikeCount || 0} · 댓글 {stage.commentCount || 0} · 플레이 {stage.playCount || 0}
+                      좋아요 {stage.likeCount || 0} · 싫어요 {stage.dislikeCount || 0} · 플레이 {stage.playCount || 0}
                     </p>
                     {stage.tags?.length > 0 && <p>{stage.tags.map((tag) => `#${tag}`).join(' ')}</p>}
                   </div>
@@ -1568,7 +1620,6 @@ export default function App() {
                     <button onClick={() => startStage(stage)} type="button">플레이</button>
                     <button className={stage.reaction === 'like' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'like')} type="button">좋아요</button>
                     <button className={stage.reaction === 'dislike' ? 'active' : ''} onClick={() => submitStageReaction(stage, 'dislike')} type="button">싫어요</button>
-                    <button onClick={() => openCommunityPanel(stage)} type="button">댓글</button>
                     {user?.id === stage.creatorId && (
                       <button onClick={() => loadBuilderFromStage(stage)} type="button">내 맵 수정</button>
                     )}
@@ -1576,27 +1627,6 @@ export default function App() {
                 </article>
               ))}
             </div>
-            {communityPanelStage && (
-              <CommunityStagePanel
-                comments={stageComments}
-                draft={commentDraft}
-                message={commentMessage}
-                onClose={() => {
-                  setCommunityPanelStage(null);
-                  setStageComments([]);
-                  setCommentDraft('');
-                  setCommentMessage('');
-                }}
-                onDraftChange={setCommentDraft}
-                onLike={() => submitStageReaction(communityPanelStage, 'like')}
-                onDislike={() => submitStageReaction(communityPanelStage, 'dislike')}
-                onReport={submitCommentReport}
-                onSubmit={submitStageComment}
-                stage={communityPanelStage}
-                textOnly
-                user={user}
-              />
-            )}
           </section>
         )}
 
@@ -2364,6 +2394,68 @@ function TagList({ tags }) {
         <span key={tag}>#{tag}</span>
       ))}
     </div>
+  );
+}
+
+function CommunityGlobalChat({ draft, message, messages, onDraftChange, onRefresh, onSubmit, user }) {
+  const chatLogRef = useRef(null);
+
+  useEffect(() => {
+    if (!chatLogRef.current) {
+      return;
+    }
+    chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight;
+  }, [messages.length]);
+
+  return (
+    <section className="community-global-chat" aria-label="커뮤니티 공용 채팅">
+      <div className="community-chat-header">
+        <div>
+          <h3>공용 채팅</h3>
+          <p>모든 플레이어가 같은 채팅방에서 대화합니다.</p>
+        </div>
+        <button onClick={onRefresh} type="button">
+          <ListRestart size={16} />
+          <span>채팅 새로고침</span>
+        </button>
+      </div>
+      <div className="chat-log global" aria-label="공용 채팅 로그" ref={chatLogRef}>
+        {messages.length === 0 ? (
+          <p className="chat-empty">아직 메시지가 없습니다.</p>
+        ) : (
+          messages.map((chat) => (
+            <article className={chat.userId === user?.id ? 'chat-line mine' : 'chat-line'} key={chat.id}>
+              <p>
+                <strong>{chat.authorNickname}</strong>
+                <span className="chat-colon">:</span>
+                <span>{chat.body}</span>
+              </p>
+              <div className="chat-line-meta">
+                <span>{formatDateTime(chat.createdAt)}</span>
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+      {message && <p className="admin-message">{message}</p>}
+      <div className="chat-composer">
+        <textarea
+          maxLength={500}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+          placeholder={user ? '공용 채팅 메시지를 입력하세요.' : '로그인 후 공용 채팅에 참여할 수 있습니다.'}
+          value={draft}
+        />
+        <button className="primary" onClick={onSubmit} type="button">
+          <span>전송</span>
+        </button>
+      </div>
+    </section>
   );
 }
 

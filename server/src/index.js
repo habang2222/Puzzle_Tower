@@ -283,6 +283,39 @@ app.get('/api/community/stages', async (req, res) => {
   res.json(stages);
 });
 
+app.get('/api/community/messages', async (req, res) => {
+  const limit = Math.max(1, Math.min(Number(req.query?.limit) || 100, 200));
+  const messages = await all(
+    `
+    SELECT m.id, m.user_id, m.body, m.created_at, m.updated_at, u.nickname AS author_nickname
+    FROM community_messages m
+    JOIN users u ON u.id = m.user_id
+    WHERE m.is_deleted = 0
+    ORDER BY m.created_at DESC, m.id DESC
+    LIMIT ?
+    `,
+    [limit]
+  );
+
+  res.json(messages.reverse().map(toCommunityMessage));
+});
+
+app.post('/api/community/messages', requireAuth, async (req, res) => {
+  const body = sanitizeDisplayText(req.body?.body || req.body?.message, maxCommentLength, '');
+
+  if (!body) {
+    res.status(400).json({ message: '메시지 내용을 입력하세요.' });
+    return;
+  }
+
+  const id = await insert(
+    'INSERT INTO community_messages (user_id, body) VALUES (?, ?)',
+    [req.user.id, body]
+  );
+  const message = await getCommunityMessageById(id);
+  res.status(201).json(toCommunityMessage(message));
+});
+
 app.get('/api/me/stages', requireAuth, async (req, res) => {
   const stages = (await all(
     `
@@ -1313,6 +1346,18 @@ async function getCommentById(id) {
   );
 }
 
+async function getCommunityMessageById(id) {
+  return await get(
+    `
+    SELECT m.id, m.user_id, m.body, m.created_at, m.updated_at, u.nickname AS author_nickname
+    FROM community_messages m
+    JOIN users u ON u.id = m.user_id
+    WHERE m.id = ?
+    `,
+    [id]
+  );
+}
+
 async function deleteStageCascade(stageId) {
   const comments = await all('SELECT id FROM stage_comments WHERE stage_id = ?', [stageId]);
   for (const comment of comments) {
@@ -1337,6 +1382,7 @@ async function deleteUserCascade(userId) {
 
   await run('DELETE FROM comment_reports WHERE reporter_id = ?', [userId]);
   await run('DELETE FROM stage_comments WHERE user_id = ?', [userId]);
+  await run('DELETE FROM community_messages WHERE user_id = ?', [userId]);
   await run('DELETE FROM stage_reactions WHERE user_id = ?', [userId]);
   await run('DELETE FROM records WHERE user_id = ?', [userId]);
   await run('DELETE FROM password_reset_tokens WHERE user_id = ?', [userId]);
@@ -1508,6 +1554,17 @@ function toComment(row) {
   return {
     id: row.id,
     stageId: row.stage_id,
+    userId: row.user_id,
+    authorNickname: row.author_nickname,
+    body: row.body,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function toCommunityMessage(row) {
+  return {
+    id: row.id,
     userId: row.user_id,
     authorNickname: row.author_nickname,
     body: row.body,

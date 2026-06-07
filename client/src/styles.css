@@ -500,6 +500,39 @@ h3 {
   font-weight: 900;
 }
 
+.community-global-chat {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 22px;
+  padding: 16px;
+  border: 1px solid rgba(66, 232, 242, 0.26);
+  border-radius: 8px;
+  background: rgba(17, 22, 29, 0.72);
+}
+
+.community-chat-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.community-chat-header h3,
+.community-chat-header p {
+  margin: 0;
+}
+
+.community-chat-header p {
+  margin-top: 4px;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+
+.community-chat-header button {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
 .community-panel {
   display: grid;
   gap: 14px;
@@ -576,6 +609,10 @@ h3 {
     linear-gradient(180deg, rgba(66, 232, 242, 0.04), transparent 38%),
     #0b0f14;
   scrollbar-width: thin;
+}
+
+.chat-log.global {
+  max-height: min(42vh, 360px);
 }
 
 .chat-empty {
@@ -1723,6 +1760,11 @@ h3 {
 
   .community-text-actions {
     justify-content: flex-start;
+  }
+
+  .community-chat-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .report-actions {

@@ -103,6 +103,18 @@ export async function fetchCommunityStages(filters = {}) {
   return request(withQuery('/api/community/stages', filters));
 }
 
+export async function fetchCommunityMessages(limit = 100) {
+  return request(withQuery('/api/community/messages', { limit }));
+}
+
+export async function createCommunityMessage(body) {
+  return request('/api/community/messages', {
+    method: 'POST',
+    auth: true,
+    body: JSON.stringify({ body })
+  });
+}
+
 export async function reactToStage(stageId, reaction) {
   return request(`/api/community/stages/${stageId}/reaction`, {
     method: 'POST',

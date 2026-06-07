@@ -240,6 +240,15 @@ async function migratePostgres() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(comment_id, reporter_id)
     );
+
+    CREATE TABLE IF NOT EXISTS community_messages (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      body TEXT NOT NULL,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   await addPostgresColumnIfMissing('users', 'email', 'TEXT');
@@ -363,6 +372,16 @@ function migrateSqlite() {
       FOREIGN KEY (comment_id) REFERENCES stage_comments(id),
       FOREIGN KEY (reporter_id) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS community_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      body TEXT NOT NULL,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
   `);
 
   addSqliteColumnIfMissing('users', 'email', 'TEXT');
@@ -477,6 +496,7 @@ async function ensureUniqueIndexes() {
   await createIndex('CREATE INDEX IF NOT EXISTS idx_stage_reactions_stage ON stage_reactions(stage_id, reaction)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_stage_comments_stage ON stage_comments(stage_id, is_deleted, created_at DESC)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_comment_reports_status ON comment_reports(status, created_at DESC)');
+  await createIndex('CREATE INDEX IF NOT EXISTS idx_community_messages_created ON community_messages(is_deleted, created_at DESC)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at)');
 }
 
