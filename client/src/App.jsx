@@ -219,6 +219,9 @@ export default function App() {
   const [publicBlocks, setPublicBlocks] = useState([]);
   const [myBlocks, setMyBlocks] = useState([]);
   const [blockDraft, setBlockDraft] = useState(() => JSON.stringify(defaultBlockCode, null, 2));
+  const [blockAiPrompt, setBlockAiPrompt] = useState('');
+  const [blockAiResults, setBlockAiResults] = useState([]);
+  const [blockAiMessage, setBlockAiMessage] = useState('');
   const [stageCodeDraft, setStageCodeDraft] = useState('');
   const [communityPanelStage, setCommunityPanelStage] = useState(null);
   const [stageComments, setStageComments] = useState([]);
@@ -567,6 +570,45 @@ export default function App() {
 
   const mergeCustomBlocks = (blocks) => {
     setCustomBlocks((current) => mergeBlocks(current, blocks));
+  };
+
+  const generateBlockWithAiPrompt = () => {
+    const result = generateBlockAiResults(blockAiPrompt, customBlocks);
+    setBlockAiResults(result.blocks);
+    setBlockAiMessage(result.message);
+
+    if (!result.blocks.length) {
+      return;
+    }
+
+    setEditingBlockId(null);
+    setBlockDraft(JSON.stringify(result.blocks[0], null, 2));
+    setSelectedTile(result.blocks[0].tile);
+    setBlockMessage(`${result.blocks[0].name} 코드를 생성했습니다. 저장하거나 팔레트에 추가하세요.`);
+  };
+
+  const applyGeneratedBlock = (block) => {
+    const normalized = normalizeCustomBlock(block);
+    setEditingBlockId(null);
+    setBlockDraft(JSON.stringify(normalized.code, null, 2));
+    setSelectedTile(normalized.tile);
+    setBlockMessage(`${normalized.name} 코드를 코드 칸에 적용했습니다.`);
+  };
+
+  const addGeneratedBlocksToPalette = () => {
+    const parsedBlocks = blockAiResults
+      .map((block) => parseBlockDraft(JSON.stringify(block)))
+      .filter((result) => result.ok)
+      .map((result) => result.block);
+
+    if (!parsedBlocks.length) {
+      setBlockAiMessage('팔레트에 추가할 수 있는 생성 코드가 없습니다.');
+      return;
+    }
+
+    mergeCustomBlocks(parsedBlocks);
+    setSelectedTile(parsedBlocks[0].tile);
+    setBlockAiMessage(`${parsedBlocks.length}개 블록을 내 팔레트에 추가했습니다. 공개 라이브러리에 올리려면 각 블록을 저장하세요.`);
   };
 
   const saveBlockDraft = async () => {
@@ -1745,8 +1787,8 @@ export default function App() {
               <StatusPill online={apiOnline} />
             </div>
 
-            {!user ? (
-              <div className="auth-card">
+            {!user && (
+              <div className="auth-card builder-login-notice">
                 <h3>로그인 후 맵을 업로드할 수 있습니다.</h3>
                 <p className="intro-copy">회원가입 또는 이메일 로그인으로 접속하면 직접 만든 맵과 커스텀 블록이 서버에 저장되고 다른 플레이어도 사용할 수 있습니다.</p>
                 <button className="primary" onClick={() => setView('auth')} type="button">
@@ -1754,7 +1796,8 @@ export default function App() {
                   <span>로그인하러 가기</span>
                 </button>
               </div>
-            ) : (
+            )}
+
               <div className="builder-grid">
                 <div className="builder-panel">
                   <label htmlFor="map-title">맵 이름</label>
@@ -1928,6 +1971,57 @@ export default function App() {
                       <span>설명서</span>
                     </button>
                   </div>
+                  <section className="block-ai-panel" aria-label="블록 코드 생성 도우미">
+                    <div className="block-ai-header">
+                      <div>
+                        <strong>블록 AI</strong>
+                        <span>내장 명령어 기반 코드 생성</span>
+                      </div>
+                      <Sparkles size={20} />
+                    </div>
+                    <textarea
+                      onChange={(event) => setBlockAiPrompt(event.target.value)}
+                      placeholder="예: H를 밟으면 4초 뒤 S가 X 함정으로 바뀌고, X를 밟으면 게임오버"
+                      spellCheck="false"
+                      value={blockAiPrompt}
+                    />
+                    <div className="block-ai-actions">
+                      <button className="primary" onClick={generateBlockWithAiPrompt} type="button">
+                        <Sparkles size={17} />
+                        <span>코드 생성</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setBlockAiPrompt('');
+                          setBlockAiResults([]);
+                          setBlockAiMessage('');
+                        }}
+                        type="button"
+                      >
+                        <Eraser size={17} />
+                        <span>초기화</span>
+                      </button>
+                      {blockAiResults.length > 1 && (
+                        <button onClick={addGeneratedBlocksToPalette} type="button">
+                          <Download size={17} />
+                          <span>팔레트 추가</span>
+                        </button>
+                      )}
+                    </div>
+                    {blockAiResults.length > 0 && (
+                      <div className="block-ai-results" aria-label="생성된 블록 코드">
+                        {blockAiResults.map((block) => (
+                          <button key={`${block.tile}-${block.name}`} onClick={() => applyGeneratedBlock(block)} type="button">
+                            <span className="palette-chip custom" style={tileStyle(block.tile, [normalizeCustomBlock(block)])}>
+                              {block.tile}
+                            </span>
+                            <span>{block.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {blockAiMessage && <p className="block-ai-message">{blockAiMessage}</p>}
+                  </section>
                   <div className="block-template-row" aria-label="블록 코드 예시">
                     {blockTemplates.map((template) => (
                       <button
@@ -2036,7 +2130,6 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            )}
           </section>
         )}
 
@@ -2767,6 +2860,428 @@ function CommunityStagePanel({
   );
 }
 
+function generateBlockAiResults(prompt, customBlocks = []) {
+  const request = String(prompt || '').trim();
+  if (!request) {
+    return {
+      blocks: [defaultBlockCode],
+      message: '요청이 비어 있어서 기본 일방통행 예시를 불러왔습니다.'
+    };
+  }
+
+  const lower = request.toLowerCase();
+  if (hasPromptAny(lower, ['포탈', 'portal', '텔레포트', '순간이동'])) {
+    return {
+      blocks: [],
+      message: '포탈은 커스텀 블록 코드가 아니라 기본 타일입니다. 제작 팔레트에서 A 또는 B를 맵에 2개 배치하면 자동 연결됩니다.'
+    };
+  }
+
+  const usedTiles = new Set(customBlocks.map((block) => normalizeCustomBlock(block).tile));
+  const mentionedTiles = extractPromptTiles(request);
+  const mainTile = choosePromptTile(inferPromptMainTile(request) || mentionedTiles[0], usedTiles, new Set());
+  const changePair = inferPromptChangePair(request, mainTile);
+  const seconds = inferPromptSeconds(request);
+  const direction = inferPromptDirection(request);
+  const moveCost = inferPromptMoveCost(request);
+  const wantsDelayed = seconds !== null && hasPromptAny(lower, ['뒤', '후', '지나', 'later', 'after']);
+  const wantsTimeLimit = seconds !== null && hasPromptAny(lower, ['이내', '안에', '전까지', 'before', 'within']);
+  const wantsChange = hasPromptAny(lower, ['바뀌', '변경', '변하', '생기', '생성', '나타', '소환', '없어', '사라', '제거', '만들']);
+  const wantsMoveOtherBlock = hasPromptAny(lower, ['moveblock', '자석', '끌어', '밀어당', '블록 이동']) || (hasPromptAny(lower, ['움직', '이동']) && mentionedTiles.length > 1);
+  const wantsGameoverSpawn = wantsChange && hasPromptAny(lower, ['게임오버', 'gameover', '실패', '죽', '함정', '위험']);
+  const usedGeneratedTiles = new Set([mainTile]);
+  const helperBlocks = [];
+
+  let effect = inferPromptEffect(lower, wantsChange, wantsMoveOtherBlock);
+  if (wantsChange || wantsMoveOtherBlock) {
+    effect = 'floor';
+  }
+
+  const code = {
+    name: inferPromptName(request, effect, mainTile, wantsChange),
+    tile: mainTile,
+    color: inferPromptColor(effect, lower),
+    effect,
+    moveCost,
+    description: '',
+    message: ''
+  };
+
+  if (effect === 'force' || effect === 'oneway') {
+    const exitDirection = normalizeDirectionValue(direction) || 'up';
+    code.outDirection = exitDirection;
+    code.exitFailMessage = `${directionLabel(code.outDirection)}쪽 출구가 막혀 있습니다.`;
+  }
+
+  if (effect === 'oneway') {
+    const requiredDirection = normalizeDirectionValue(direction) || code.outDirection || 'up';
+    code.requires = {
+      direction: requiredDirection
+    };
+    code.failMessage = `${directionLabel(requiredDirection)} 방향으로 움직일 때만 통과할 수 있습니다.`;
+  }
+
+  if (effect === 'lock' || hasPromptAny(lower, ['열쇠 필요', '열쇠가 있어야', 'key required'])) {
+    code.requires = {
+      ...(code.requires || {}),
+      hasKey: true
+    };
+    code.failMessage = '열쇠가 있어야 통과할 수 있습니다.';
+  }
+
+  if (wantsTimeLimit) {
+    code.requires = {
+      ...(code.requires || {}),
+      elapsedSeconds: { '<=': seconds }
+    };
+    code.failMessage = `${seconds}초 안에 도착해야 사용할 수 있습니다.`;
+  }
+
+  if (hasPromptAny(lower, ['열쇠가 있으면 목표', '열쇠 있으면 클리어', 'key goal'])) {
+    code.if = [
+      {
+        when: { hasKey: true },
+        effect: 'goal',
+        message: '열쇠 조건을 만족해서 클리어됩니다.'
+      }
+    ];
+  }
+
+  if (wantsMoveOtherBlock) {
+    const targetTile = choosePromptTile(mentionedTiles.find((tile) => tile !== mainTile) || 'C', usedTiles, usedGeneratedTiles);
+    code.moveBlock = [
+      {
+        targetTile,
+        direction: hasPromptAny(lower, ['반대', '멀어', 'away']) ? 'awayFromPlayer' : direction || 'towardPlayer',
+        distance: inferPromptDistance(request),
+        limit: inferPromptLimit(request)
+      }
+    ];
+  }
+
+  if (wantsChange) {
+    const spawnTile = inferPromptSpawnTile(request, changePair, mainTile, wantsGameoverSpawn, usedTiles, usedGeneratedTiles);
+    const targetTile = inferPromptTargetTile(request, changePair, mainTile, mentionedTiles);
+    const spawnAction = {
+      tile: spawnTile
+    };
+
+    if (targetTile) {
+      spawnAction.targetTile = targetTile;
+    } else {
+      spawnAction.relative = 'current';
+    }
+    if (wantsDelayed) {
+      spawnAction.afterSeconds = seconds;
+    }
+    code.change = [spawnAction];
+
+    if (wantsGameoverSpawn && /^[C-Z]$/.test(spawnTile)) {
+      helperBlocks.push(createPromptHelperBlock({
+        tile: spawnTile,
+        name: '게임오버 함정',
+        color: '#fb315f',
+        effect: 'gameover',
+        description: `이 ${spawnTile} 블록을 밟으면 즉시 게임오버됩니다.`,
+        message: '함정을 밟았습니다. 게임오버!'
+      }));
+      usedGeneratedTiles.add(spawnTile);
+    }
+
+    if (targetTile && /^[C-Z]$/.test(targetTile) && !usedTiles.has(targetTile) && targetTile !== mainTile) {
+      helperBlocks.push(createPromptHelperBlock({
+        tile: targetTile,
+        name: '변화 표시칸',
+        color: '#64748b',
+        effect: 'floor',
+        description: `이 ${targetTile} 블록은 다른 블록이 바꾸기 전까지는 안전한 표시칸입니다.`,
+        message: '아직은 안전합니다.'
+      }));
+      usedGeneratedTiles.add(targetTile);
+    }
+  }
+
+  code.description = createPromptDescription(code, lower);
+  code.message = code.message || createPromptMessage(code, wantsChange, wantsMoveOtherBlock);
+
+  const blocks = [code, ...helperBlocks]
+    .filter((block, index, array) => array.findIndex((item) => item.tile === block.tile) === index)
+    .map((block) => normalizeCustomBlock(block).code)
+    .filter((block) => parseBlockDraft(JSON.stringify(block)).ok);
+
+  return {
+    blocks,
+    message: blocks.length > 1
+      ? `${blocks.length}개 코드를 생성했습니다. 첫 번째 코드는 코드 칸에 넣었고, 나머지는 생성 결과에서 눌러 적용할 수 있습니다.`
+      : '블록 코드 1개를 생성했습니다.'
+  };
+}
+
+function inferPromptEffect(lower, wantsChange, wantsMoveOtherBlock) {
+  if (wantsChange || wantsMoveOtherBlock) return 'floor';
+  if (hasPromptAny(lower, ['따라', '추적', '쫓', 'chase'])) return 'chase';
+  if (hasPromptAny(lower, ['밀 수', '밀수', '상자', 'push'])) return 'push';
+  if (hasPromptAny(lower, ['게임오버', 'gameover', '죽', '즉시 실패', '위험', '함정'])) return 'gameover';
+  if (hasPromptAny(lower, ['벽', 'wall', '막'])) return 'wall';
+  if (hasPromptAny(lower, ['느림', '느리', '진흙', 'slow', '이동 횟수'])) return 'slow';
+  if (hasPromptAny(lower, ['튕', 'bounce'])) return 'bounce';
+  if (hasPromptAny(lower, ['열쇠', 'key']) && !hasPromptAny(lower, ['잠금', 'lock', '열쇠 문', '열쇠문'])) return 'key';
+  if (hasPromptAny(lower, ['잠금', 'lock', '열쇠 문', '열쇠문'])) return 'lock';
+  if (hasPromptAny(lower, ['목표', '클리어', 'goal'])) return 'goal';
+  if (hasPromptAny(lower, ['한 방향', '한방향', '일방통행', 'oneway', '게이트'])) return 'oneway';
+  if (hasPromptAny(lower, ['강제', '바람', '밀려', 'force'])) return 'force';
+  return 'floor';
+}
+
+function extractPromptTiles(prompt) {
+  const tiles = [];
+  const addTile = (value) => {
+    const tile = String(value || '').trim().slice(0, 1).toUpperCase();
+    if (/^[C-Z]$/.test(tile) && !['P', 'G', 'K', 'L', 'A', 'B'].includes(tile) && !tiles.includes(tile)) {
+      tiles.push(tile);
+    }
+  };
+
+  const patterns = [
+    /(?:tile|타일|문자)\s*[:=]?\s*([c-z])/gi,
+    /([c-z])\s*(?:를|을|가|이|은|는|에|에서|로|으로)/gi,
+    /([c-z])\s*(?:블록|발판|함정|문|게이트|타일)/gi
+  ];
+  patterns.forEach((pattern) => {
+    for (const match of prompt.matchAll(pattern)) {
+      addTile(match[1]);
+    }
+  });
+
+  return tiles;
+}
+
+function inferPromptMainTile(prompt) {
+  const patterns = [
+    /([c-z])\s*(?:를|을)\s*밟/i,
+    /([c-z])\s*(?:발판|블록|타일)\s*(?:을|를)?\s*밟/i,
+    /(?:밟으면|닿으면|올라가면)\s*([c-z])/i
+  ];
+  for (const pattern of patterns) {
+    const match = prompt.match(pattern);
+    if (match) {
+      const tile = String(match[1] || '').toUpperCase();
+      if (/^[C-Z]$/.test(tile) && !['P', 'G', 'K', 'L', 'A', 'B'].includes(tile)) {
+        return tile;
+      }
+    }
+  }
+  return '';
+}
+
+function choosePromptTile(preferred, usedTiles, generatedTiles) {
+  const tile = String(preferred || '').trim().slice(0, 1).toUpperCase();
+  if (/^[C-Z]$/.test(tile) && !['P', 'G', 'K', 'L', 'A', 'B'].includes(tile)) {
+    return tile;
+  }
+  for (const candidate of 'CDEFGHIJMNOQRSTUVWXYZ') {
+    if (!usedTiles.has(candidate) && !generatedTiles.has(candidate)) {
+      generatedTiles.add(candidate);
+      return candidate;
+    }
+  }
+  return 'C';
+}
+
+function inferPromptChangePair(prompt, mainTile) {
+  const patterns = [
+    /([c-z])\s*(?:가|이|를|을)\s*([.#c-zgkl])(?:\s*[a-z가-힣]{0,12})?\s*(?:로|으로)/i,
+    /([c-z])\s*(?:->|=>)\s*([.#c-zgkl])/i
+  ];
+  for (const pattern of patterns) {
+    const match = prompt.match(pattern);
+    if (match) {
+      const from = normalizeSpawnTile(match[1]);
+      const to = normalizeSpawnTile(match[2]);
+      if (from && to && from !== mainTile) {
+        return { targetTile: from, tile: to };
+      }
+    }
+  }
+  return null;
+}
+
+function inferPromptSpawnTile(prompt, changePair, mainTile, wantsGameoverSpawn, usedTiles, generatedTiles) {
+  if (changePair?.tile) {
+    return changePair.tile;
+  }
+  const lower = prompt.toLowerCase();
+  if (hasPromptAny(lower, ['없어', '사라', '제거'])) return '.';
+  if (hasPromptAny(lower, ['벽', 'wall'])) return '#';
+  if (hasPromptAny(lower, ['목표', '클리어', 'goal'])) return 'G';
+  if (hasPromptAny(lower, ['열쇠', 'key'])) return 'K';
+  if (hasPromptAny(lower, ['잠금', 'lock', '열쇠 문', '열쇠문'])) return 'L';
+  if (wantsGameoverSpawn) return choosePromptTile('X', usedTiles, generatedTiles);
+  return choosePromptTile(extractPromptTiles(prompt).find((tile) => tile !== mainTile) || 'S', usedTiles, generatedTiles);
+}
+
+function inferPromptTargetTile(prompt, changePair, mainTile, mentionedTiles) {
+  if (changePair?.targetTile) {
+    return changePair.targetTile;
+  }
+  if (hasPromptAny(prompt.toLowerCase(), ['현재', '밟은 칸', '자기 자신'])) {
+    return '';
+  }
+  return mentionedTiles.find((tile) => tile !== mainTile) || '';
+}
+
+function inferPromptDirection(prompt) {
+  const lower = prompt.toLowerCase();
+  if (hasPromptAny(lower, ['up', '위', '상'])) return 'up';
+  if (hasPromptAny(lower, ['down', '아래', '밑', '하'])) return 'down';
+  if (hasPromptAny(lower, ['left', '왼', '좌'])) return 'left';
+  if (hasPromptAny(lower, ['right', '오른', '우'])) return 'right';
+  if (hasPromptAny(lower, ['플레이어 방향', '플레이어쪽', 'towardplayer'])) return 'towardPlayer';
+  if (hasPromptAny(lower, ['플레이어 반대', 'awayfromplayer'])) return 'awayFromPlayer';
+  return '';
+}
+
+function inferPromptSeconds(prompt) {
+  const match = prompt.match(/(\d+(?:\.\d+)?)\s*초/);
+  if (!match) {
+    return null;
+  }
+  return Math.max(0, Math.min(Math.round(Number(match[1])), 99));
+}
+
+function inferPromptMoveCost(prompt) {
+  const match = prompt.match(/(?:이동|move|소모|cost)[^\d]{0,8}(\d+)/i);
+  if (!match) {
+    return 1;
+  }
+  return Math.max(1, Math.min(Math.round(Number(match[1])), 9));
+}
+
+function inferPromptDistance(prompt) {
+  const match = prompt.match(/(\d+)\s*칸/);
+  if (!match) {
+    return 1;
+  }
+  return Math.max(1, Math.min(Math.round(Number(match[1])), 5));
+}
+
+function inferPromptLimit(prompt) {
+  const match = prompt.match(/(?:최대|limit|count)[^\d]{0,8}(\d+)/i);
+  if (!match) {
+    return 12;
+  }
+  return Math.max(1, Math.min(Math.round(Number(match[1])), 12));
+}
+
+function inferPromptName(prompt, effect, tile, wantsChange) {
+  const quoted = prompt.match(/["'“”‘’]([^"'“”‘’]{1,18})["'“”‘’]/);
+  if (quoted) {
+    return quoted[1];
+  }
+  if (wantsChange) return `${tile} 변환 발판`;
+  const names = {
+    floor: `${tile} 발판`,
+    wall: `${tile} 벽`,
+    slow: `${tile} 느림 발판`,
+    bounce: `${tile} 튕김 패드`,
+    key: `${tile} 열쇠`,
+    lock: `${tile} 잠금문`,
+    goal: `${tile} 목표`,
+    gameover: `${tile} 함정`,
+    force: `${tile} 강제 이동`,
+    oneway: `${tile} 일방통행`,
+    push: `${tile} 상자`,
+    chase: `${tile} 추적자`
+  };
+  return names[effect] || `${tile} 커스텀`;
+}
+
+function inferPromptColor(effect, lower) {
+  if (hasPromptAny(lower, ['빨간', '빨강', 'red'])) return '#fb315f';
+  if (hasPromptAny(lower, ['파란', '파랑', 'blue'])) return '#38bdf8';
+  if (hasPromptAny(lower, ['초록', 'green'])) return '#42f29b';
+  if (hasPromptAny(lower, ['노란', '노랑', 'yellow'])) return '#ffd166';
+  const colors = {
+    floor: '#38bdf8',
+    wall: '#64748b',
+    slow: '#a78bfa',
+    bounce: '#f472b6',
+    key: '#ffd166',
+    lock: '#fb315f',
+    goal: '#42f29b',
+    gameover: '#fb315f',
+    force: '#22d3ee',
+    oneway: '#38bdf8',
+    push: '#f59e0b',
+    chase: '#ef4444'
+  };
+  return colors[effect] || '#a78bfa';
+}
+
+function createPromptDescription(code, lower) {
+  if (code.change?.length) {
+    const action = code.change[0];
+    const timing = action.afterSeconds ? `${action.afterSeconds}초 뒤 ` : '';
+    const target = action.targetTile ? `${action.targetTile} 블록이` : '밟은 칸이';
+    return `이 블록을 밟으면 ${timing}${target} ${action.tile} 타일로 바뀝니다.`;
+  }
+  if (code.moveBlock?.length) {
+    const action = code.moveBlock[0];
+    return `이 블록을 밟으면 ${action.targetTile} 블록이 ${directionLabel(action.direction)} 방향으로 ${action.distance}칸 움직입니다.`;
+  }
+  if (code.requires?.elapsedSeconds) {
+    return '시간 조건을 만족해야 지나갈 수 있는 블록입니다.';
+  }
+  if (code.effect === 'chase') return '플레이어가 움직일 때마다 이 블록도 플레이어 쪽으로 따라옵니다. 닿으면 게임오버입니다.';
+  if (code.effect === 'gameover') return '이 블록을 밟으면 즉시 게임오버됩니다.';
+  if (code.effect === 'oneway') return `이 블록은 ${directionLabel(code.outDirection)} 방향 조건을 만족할 때만 사용할 수 있습니다.`;
+  if (code.effect === 'force') return `이 블록을 밟으면 ${directionLabel(code.outDirection)} 방향으로 한 칸 더 밀려납니다.`;
+  if (code.effect === 'push') return '플레이어가 이 블록을 향해 움직이면 같은 방향으로 한 칸 밀립니다.';
+  if (code.effect === 'lock') return '열쇠가 있어야 통과할 수 있는 잠금 블록입니다.';
+  if (code.effect === 'key') return '밟으면 열쇠를 얻는 블록입니다.';
+  if (code.effect === 'slow') return `이 블록 위에 있으면 이동 횟수를 ${code.moveCost}칸 사용합니다.`;
+  if (code.effect === 'wall') return '지나갈 수 없는 커스텀 벽입니다.';
+  if (code.effect === 'goal') return '이 블록에 도착하면 스테이지를 클리어합니다.';
+  if (code.effect === 'bounce') return '밟으면 원래 자리로 튕겨 돌아갑니다.';
+  return hasPromptAny(lower, ['조건']) ? '조건을 만족하면 지나갈 수 있는 커스텀 발판입니다.' : '일반 발판처럼 지나갈 수 있는 커스텀 블록입니다.';
+}
+
+function createPromptMessage(code, wantsChange, wantsMoveOtherBlock) {
+  if (wantsChange) return '블록 변화가 실행되었습니다.';
+  if (wantsMoveOtherBlock) return '지정한 블록이 움직였습니다.';
+  const messages = {
+    floor: '발판을 밟았습니다.',
+    wall: '벽은 지나갈 수 없습니다.',
+    slow: '이동 횟수가 더 소모됩니다.',
+    bounce: '튕겨 나왔습니다.',
+    key: '열쇠를 얻었습니다.',
+    lock: '잠금이 열렸습니다.',
+    goal: '스테이지 클리어!',
+    gameover: '함정을 밟았습니다. 게임오버!',
+    force: '강제 이동이 실행되었습니다.',
+    oneway: '지정된 방향으로만 이동할 수 있습니다.',
+    push: '블록을 한 칸 밀었습니다.',
+    chase: '추적 블록에 닿았습니다. 게임오버!'
+  };
+  return messages[code.effect] || '커스텀 블록이 작동했습니다.';
+}
+
+function createPromptHelperBlock({ tile, name, color, effect, description, message }) {
+  return {
+    name,
+    tile,
+    color,
+    effect,
+    moveCost: 1,
+    description,
+    message
+  };
+}
+
+function hasPromptAny(text, words) {
+  return words.some((word) => text.includes(word));
+}
+
 const aiBlockPrompt = `너는 Puzzle Tower 커스텀 블록 제작 도우미야.
 아래 규칙만 사용해서 JSON 블록 코드 하나를 만들어줘.
 
@@ -2874,6 +3389,12 @@ moveBlock:
 - direction: up/down/left/right/towardPlayer/awayFromPlayer
 - distance: 한 번에 움직일 칸 수, 1~5
 - limit 또는 count: 최대 몇 개 움직일지, 1~12
+
+제작 화면 블록 AI:
+- 커스텀 블록 코드 패널의 블록 AI 입력칸에 한국어로 원하는 규칙을 적으면 JSON 초안을 만듭니다.
+- 외부 API가 아니라 Puzzle Tower에 들어있는 effect, requires, if, change, moveBlock 규칙을 조합합니다.
+- 여러 블록이 필요한 요청은 H 발판, X 함정, S 표시칸처럼 여러 코드를 같이 생성합니다.
+- 생성 코드는 실행 코드가 아니라 JSON 데이터라서 사용자가 쓴 문장을 직접 실행하지 않습니다.
 
 밀 수 있는 상자:
 {
@@ -3167,6 +3688,20 @@ awayFromPlayer = 플레이어 반대쪽`}</pre>
     }
   ]
 }`}</pre>
+          </section>
+
+          <section>
+            <h3>제작 화면 블록 AI</h3>
+            <p>커스텀 블록 코드 패널의 블록 AI에 한국어로 원하는 규칙을 적으면, 아래 명령어를 조합해서 JSON 초안을 만듭니다.</p>
+            <ul className="guide-list">
+              <li>한 방향, 위, 아래, left, right → outDirection과 requires.direction</li>
+              <li>몇 초 안, 5초 이내 → requires.elapsedSeconds</li>
+              <li>몇 초 뒤 바뀜, S가 X로 바뀜 → change와 afterSeconds</li>
+              <li>플레이어 방향으로 움직임 → moveBlock의 towardPlayer</li>
+              <li>따라오는 적, 추적 → chase</li>
+              <li>함정, 게임오버 → gameover</li>
+            </ul>
+            <p>여러 블록이 필요한 요청은 여러 코드를 같이 만듭니다. 예를 들어 H를 밟으면 S가 X 함정으로 바뀌는 요청은 H 발판, X 함정, S 표시칸을 함께 생성합니다.</p>
           </section>
 
           <section>
@@ -4461,7 +4996,9 @@ function directionLabel(direction) {
     up: '위',
     down: '아래',
     left: '왼쪽',
-    right: '오른쪽'
+    right: '오른쪽',
+    towardPlayer: '플레이어 쪽',
+    awayFromPlayer: '플레이어 반대쪽'
   };
   return labels[direction] || '지정된';
 }

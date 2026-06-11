@@ -1419,6 +1419,69 @@ h3 {
   min-height: 190px;
 }
 
+.block-ai-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(66, 242, 155, 0.28);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(66, 242, 155, 0.09), rgba(56, 189, 248, 0.06)),
+    #10161d;
+}
+
+.block-ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.block-ai-header strong,
+.block-ai-header span {
+  display: block;
+}
+
+.block-ai-header strong {
+  color: var(--green);
+}
+
+.block-ai-header span,
+.block-ai-message {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.block-ai-panel textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.block-ai-actions,
+.block-ai-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.block-ai-actions button,
+.block-ai-results button {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.block-ai-results button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: min(100%, 160px);
+}
+
+.block-ai-message {
+  margin: 0;
+}
+
 .block-template-row {
   display: flex;
   gap: 8px;
