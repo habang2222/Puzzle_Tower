@@ -35,6 +35,12 @@ const maxBoardSize = 20;
 const maxStageImageLength = 260000;
 const maxCommentLength = 500;
 const allowedCorsOrigins = createAllowedCorsOrigins();
+let lastEmailDelivery = {
+  provider: 'none',
+  ok: false,
+  reason: 'not_attempted',
+  updatedAt: null
+};
 
 enforceSecurityConfig();
 
@@ -85,6 +91,10 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/storage/status', (req, res) => {
   res.json(getStorageInfo());
+});
+
+app.get('/api/mail/status', (req, res) => {
+  res.json(getPublicMailStatus());
 });
 
 app.post('/api/auth/email-verification/request', async (req, res) => {
@@ -156,7 +166,8 @@ app.post('/api/auth/email-verification/request', async (req, res) => {
   }
 
   res.status(503).json({
-    message: '인증 코드 메일 발송에 실패했습니다. Railway에서는 Gmail SMTP가 막힐 수 있으니 RESEND_API_KEY와 RESEND_FROM을 설정하거나 SMTP가 허용되는 플랜을 사용하세요.'
+    message: '인증 코드 메일 발송에 실패했습니다. Railway에서는 Gmail SMTP가 막힐 수 있으니 RESEND_API_KEY와 RESEND_FROM을 설정하거나 SMTP가 허용되는 플랜을 사용하세요.',
+    mailStatus: getPublicMailStatus()
   });
 });
 
@@ -291,6 +302,7 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
     response.message = '메일 서버가 없어 화면에 재설정 코드를 표시합니다. 15분 안에 사용하세요.';
   } else {
     response.message = '비밀번호 재설정 메일 발송에 실패했습니다. Railway에서는 Gmail SMTP가 막힐 수 있으니 RESEND_API_KEY와 RESEND_FROM을 설정하거나 SMTP가 허용되는 플랜을 사용하세요.';
+    response.mailStatus = getPublicMailStatus();
   }
   res.json(response);
 });
@@ -2458,9 +2470,13 @@ async function sendPasswordResetEmail(email, resetCode) {
 
 async function sendAuthEmail({ to, subject, text, logLabel }) {
   if (hasResendConfig()) {
-    const sentWithResend = await sendWithResend({ to, subject, text, logLabel });
-    if (sentWithResend) {
+    const resendResult = await sendWithResend({ to, subject, text, logLabel });
+    setLastEmailDelivery(resendResult);
+    if (resendResult.ok) {
       return true;
+    }
+    if (process.env.EMAIL_FALLBACK_TO_SMTP !== 'true') {
+      return false;
     }
   }
 
@@ -2469,6 +2485,11 @@ async function sendAuthEmail({ to, subject, text, logLabel }) {
   const pass = String(process.env.SMTP_PASS || '').trim();
 
   if (!host || !user || !pass || hasPlaceholderSmtpValue({ host, user, pass })) {
+    setLastEmailDelivery({
+      provider: 'smtp',
+      ok: false,
+      reason: 'smtp_not_configured'
+    });
     return false;
   }
 
@@ -2498,9 +2519,19 @@ async function sendAuthEmail({ to, subject, text, logLabel }) {
       12000,
       'SMTP send timed out'
     );
+    setLastEmailDelivery({
+      provider: 'smtp',
+      ok: true,
+      reason: 'sent'
+    });
     return true;
   } catch (error) {
     console.warn(`${logLabel} failed:`, error.message);
+    setLastEmailDelivery({
+      provider: 'smtp',
+      ok: false,
+      reason: sanitizeMailError(error.message)
+    });
     return false;
   }
 }
@@ -2543,13 +2574,25 @@ async function sendWithResend({ to, subject, text, logLabel }) {
     if (!response.ok) {
       const errorBody = await response.text().catch(() => '');
       console.warn(`${logLabel} failed via Resend:`, response.status, errorBody.slice(0, 300));
-      return false;
+      return {
+        provider: 'resend',
+        ok: false,
+        reason: `resend_http_${response.status}`
+      };
     }
 
-    return true;
+    return {
+      provider: 'resend',
+      ok: true,
+      reason: 'sent'
+    };
   } catch (error) {
     console.warn(`${logLabel} failed via Resend:`, error.message);
-    return false;
+    return {
+      provider: 'resend',
+      ok: false,
+      reason: sanitizeMailError(error.message)
+    };
   }
 }
 
@@ -2561,6 +2604,41 @@ function hasPlaceholderResendValue({ apiKey, from }) {
 function hasPlaceholderSmtpValue({ host, user, pass }) {
   const values = [host, user, pass].map((value) => value.toLowerCase());
   return values.some((value) => value.includes('your-email') || value.includes('your-gmail-app-password') || value.includes('replace-this'));
+}
+
+function getPublicMailStatus() {
+  const smtpHost = String(process.env.SMTP_HOST || '').trim();
+  const smtpUser = String(process.env.SMTP_USER || '').trim();
+  const smtpPass = String(process.env.SMTP_PASS || '').trim();
+  return {
+    resendConfigured: hasResendConfig(),
+    smtpConfigured: Boolean(smtpHost && smtpUser && smtpPass && !hasPlaceholderSmtpValue({ host: smtpHost, user: smtpUser, pass: smtpPass })),
+    fallbackToSmtp: process.env.EMAIL_FALLBACK_TO_SMTP === 'true',
+    lastDelivery: lastEmailDelivery
+  };
+}
+
+function setLastEmailDelivery(result) {
+  lastEmailDelivery = {
+    provider: result.provider || 'unknown',
+    ok: result.ok === true,
+    reason: result.reason || 'unknown',
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function sanitizeMailError(message) {
+  const normalized = String(message || 'unknown_error').toLowerCase();
+  if (normalized.includes('timed out') || normalized.includes('timeout') || normalized.includes('etimedout')) {
+    return 'timeout';
+  }
+  if (normalized.includes('authentication') || normalized.includes('auth') || normalized.includes('credentials')) {
+    return 'auth_failed';
+  }
+  if (normalized.includes('network') || normalized.includes('enetwork') || normalized.includes('econn')) {
+    return 'network_failed';
+  }
+  return normalized.replace(/[^a-z0-9_-]/g, '_').slice(0, 80) || 'unknown_error';
 }
 
 async function withTimeout(promise, timeoutMs, message) {
