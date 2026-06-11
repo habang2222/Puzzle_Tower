@@ -166,7 +166,7 @@ app.post('/api/auth/email-verification/request', async (req, res) => {
   }
 
   res.status(503).json({
-    message: '인증 코드 메일 발송에 실패했습니다. Railway에서는 Gmail SMTP가 막힐 수 있으니 RESEND_API_KEY와 RESEND_FROM을 설정하거나 SMTP가 허용되는 플랜을 사용하세요.',
+    message: getMailFailureMessage('인증 코드 메일 발송'),
     mailStatus: getPublicMailStatus()
   });
 });
@@ -301,7 +301,7 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
     response.resetCode = resetCode;
     response.message = '메일 서버가 없어 화면에 재설정 코드를 표시합니다. 15분 안에 사용하세요.';
   } else {
-    response.message = '비밀번호 재설정 메일 발송에 실패했습니다. Railway에서는 Gmail SMTP가 막힐 수 있으니 RESEND_API_KEY와 RESEND_FROM을 설정하거나 SMTP가 허용되는 플랜을 사용하세요.';
+    response.message = getMailFailureMessage('비밀번호 재설정 메일 발송');
     response.mailStatus = getPublicMailStatus();
   }
   res.json(response);
@@ -2627,6 +2627,23 @@ function setLastEmailDelivery(result) {
     reason: result.reason || 'unknown',
     updatedAt: new Date().toISOString()
   };
+}
+
+function getMailFailureMessage(action) {
+  const reason = lastEmailDelivery.reason;
+  if (reason === 'resend_domain_not_verified' || reason === 'resend_from_domain_mismatch') {
+    return `${action}에 실패했습니다. RESEND_FROM의 발신 도메인이 Resend에서 인증되지 않았습니다. Resend Domains에서 인증한 도메인의 이메일 주소를 RESEND_FROM에 넣어주세요.`;
+  }
+  if (reason === 'resend_testing_recipient_limited') {
+    return `${action}에 실패했습니다. Resend 테스트 발신자는 Resend 계정 이메일로만 보낼 수 있습니다. 실제 사용자에게 보내려면 도메인 인증이 필요합니다.`;
+  }
+  if (reason === 'resend_auth_or_permission') {
+    return `${action}에 실패했습니다. RESEND_API_KEY 권한 또는 값이 올바른지 확인해주세요.`;
+  }
+  if (reason === 'smtp_not_configured') {
+    return `${action}에 실패했습니다. Railway Hobby/Free 계정에서는 SMTP가 막힐 수 있으니 RESEND_API_KEY와 인증된 RESEND_FROM을 설정해주세요.`;
+  }
+  return `${action}에 실패했습니다. Railway에서는 Gmail SMTP가 막힐 수 있으니 RESEND_API_KEY와 인증된 RESEND_FROM을 설정해주세요.`;
 }
 
 function sanitizeMailError(message) {
