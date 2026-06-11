@@ -82,6 +82,8 @@ ADMIN_TOKEN=change-this-token
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-this-admin-password
 JWT_SECRET=replace-this-with-a-long-random-value
+JWT_EXPIRES_IN=12h
+ALLOW_LOCAL_ADMIN123=false
 PASSWORD_RESET_EXPOSE_CODE=false
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
@@ -97,7 +99,7 @@ DATABASE_URL=postgresql://user:password@host:port/database
 When `DATABASE_URL` is set, the backend uses Postgres. Without `DATABASE_URL`, `PUZZLE_TOWER_DATA_DIR` controls where `puzzle-tower.sqlite` is stored. Locally, the default is `server/data/`.
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 If environment variables are not available, open the in-app Admin screen, enter the admin setup token, Admin email, and Admin password, then press "Admin 로그인 설정".
-The admin setup token is `ADMIN_TOKEN`, not the Admin login password. The `admin123` fallback is available only on local non-production runs. On Railway/production, set `ADMIN_TOKEN` explicitly or log in as the `Admin` account; admin APIs also accept the normal Admin login JWT.
+The admin setup token is `ADMIN_TOKEN`, not the Admin login password. The old `admin123` fallback is disabled by default. For a temporary local-only demo, set `ALLOW_LOCAL_ADMIN123=true`; never set that variable on Railway/production. On Railway/production, set a long random `ADMIN_TOKEN` or log in as the `Admin` account; admin APIs also accept the normal Admin login JWT.
 Password reset codes are stored hashed and expire after 15 minutes. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` to send reset codes by email. For Gmail, use a Google App Password, not the normal Gmail password. Without an email provider, local/dev runs return the reset code for testing. On production, set `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
 
 ## API List
@@ -318,11 +320,13 @@ DELETE /api/admin/stages/:id
 POST /api/admin/login
 ```
 
-Default local admin token:
+Temporary local fallback only:
 
 ```text
-admin123
+ALLOW_LOCAL_ADMIN123=true
 ```
+
+Without that explicit local flag, `admin123` is rejected.
 
 ## Deployment
 
@@ -379,12 +383,15 @@ Required Railway variables:
 ```env
 NODE_ENV=production
 JWT_SECRET=replace-this-with-a-long-random-value
+JWT_EXPIRES_IN=12h
 ADMIN_TOKEN=change-this-token
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-this-admin-password
 CLIENT_ORIGIN=https://habang2222.github.io
 CLIENT_URL=https://habang2222.github.io/Puzzle_Tower/
 ```
+
+Use new random values for `JWT_SECRET` and `ADMIN_TOKEN` if either value was ever shown in chat, browser screenshots, logs, or a public repository. Production startup rejects missing or weak `JWT_SECRET` values.
 
 Railway Postgres mode:
 

@@ -4,7 +4,7 @@ import cors from 'cors';
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { all, get, getStorageInfo, initDatabase, insert, run } from './db.js';
 import { createNicknameKey, parseTags, sanitizeDisplayText, validateNicknameInput } from './nickname.js';
 
@@ -14,20 +14,29 @@ const configuredAdminToken = String(process.env.ADMIN_TOKEN || '').trim();
 const isProductionDeployment = process.env.NODE_ENV === 'production' || Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RENDER);
 const defaultAdminToken = 'admin123';
 const configuredAdminTokenIsDefault = configuredAdminToken === defaultAdminToken;
-const adminTokenFallbackEnabled = !configuredAdminToken && !isProductionDeployment;
+const adminTokenFallbackEnabled =
+  !configuredAdminToken && !isProductionDeployment && process.env.ALLOW_LOCAL_ADMIN123 === 'true';
 const adminToken =
   configuredAdminToken && !(isProductionDeployment && configuredAdminTokenIsDefault)
     ? configuredAdminToken
     : adminTokenFallbackEnabled
     ? defaultAdminToken
     : '';
-const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-me';
+const rawJwtSecret = String(process.env.JWT_SECRET || '').trim();
+const developmentJwtSecret = 'dev-secret-change-me';
+const jwtSecret = rawJwtSecret || developmentJwtSecret;
+const jwtIssuer = String(process.env.JWT_ISSUER || 'puzzle-tower-api').trim();
+const jwtAudience = String(process.env.JWT_AUDIENCE || 'puzzle-tower-client').trim();
+const jwtExpiresIn = String(process.env.JWT_EXPIRES_IN || '12h').trim();
 const recordRateLimitWindowMs = 10000;
 const recordRateLimitMax = 8;
 const recordRateLimits = new Map();
 const maxBoardSize = 20;
 const maxStageImageLength = 260000;
 const maxCommentLength = 500;
+const allowedCorsOrigins = createAllowedCorsOrigins();
+
+enforceSecurityConfig();
 
 const asyncHandler = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -43,7 +52,26 @@ for (const method of ['get', 'post', 'put', 'delete']) {
   };
 }
 
-app.use(cors({ origin: true }));
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.use(applySecurityHeaders);
+app.use(
+  cors({
+    origin: checkCorsOrigin,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
+    maxAge: 600
+  })
+);
+app.use('/api/auth/login', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 20, methods: ['POST'] }));
+app.use('/api/auth/register', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 12, methods: ['POST'] }));
+app.use('/api/auth/password-reset', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 8, methods: ['POST'] }));
+app.use('/api/admin', createRateLimiter({ windowMs: 60 * 1000, max: 40 }));
+app.use('/api/community/messages', createRateLimiter({ windowMs: 10 * 1000, max: 6, methods: ['POST'] }));
+app.use('/api/community/stages', createRateLimiter({ windowMs: 60 * 1000, max: 30, methods: ['POST', 'PUT', 'DELETE'] }));
+app.use('/api/blocks', createRateLimiter({ windowMs: 60 * 1000, max: 30, methods: ['POST', 'PUT', 'DELETE'] }));
+app.use('/api/comments', createRateLimiter({ windowMs: 60 * 1000, max: 20, methods: ['POST'] }));
+app.use('/api/records', createRateLimiter({ windowMs: 10 * 1000, max: 20, methods: ['POST'] }));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => {
@@ -1027,13 +1055,135 @@ initDatabase().then(async () => {
   });
 });
 
+function enforceSecurityConfig() {
+  const weakJwtSecrets = new Set([
+    '',
+    developmentJwtSecret,
+    'secret',
+    'password',
+    'changeme',
+    'jwt_secret',
+    'replace-this-with-a-long-random-value'
+  ]);
+
+  if (isProductionDeployment) {
+    if (!rawJwtSecret || rawJwtSecret.length < 32 || weakJwtSecrets.has(rawJwtSecret.toLowerCase())) {
+      throw new Error('Production requires JWT_SECRET to be a private random value with at least 32 characters.');
+    }
+    if (configuredAdminTokenIsDefault) {
+      console.warn('ADMIN_TOKEN=admin123 is ignored on production. Set a long random ADMIN_TOKEN or use the Admin login account.');
+    }
+    if (configuredAdminToken && configuredAdminToken.length < 24) {
+      console.warn('ADMIN_TOKEN is short. Use at least 24 random characters.');
+    }
+  }
+}
+
+function applySecurityHeaders(req, res, next) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store');
+  }
+  next();
+}
+
+function createAllowedCorsOrigins() {
+  const configuredOrigins = [
+    process.env.CLIENT_ORIGIN,
+    process.env.CLIENT_URL,
+    process.env.FRONTEND_URL,
+    process.env.VITE_CLIENT_URL
+  ]
+    .flatMap((value) => String(value || '').split(','))
+    .map(normalizeOrigin)
+    .filter(Boolean);
+
+  return new Set([
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
+    'https://habang2222.github.io',
+    ...configuredOrigins
+  ]);
+}
+
+function normalizeOrigin(value) {
+  const trimmed = String(value || '').trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    return '';
+  }
+  try {
+    return new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`).origin;
+  } catch (error) {
+    return '';
+  }
+}
+
+function checkCorsOrigin(origin, callback) {
+  if (!origin || allowedCorsOrigins.has(origin)) {
+    callback(null, true);
+    return;
+  }
+  callback(null, false);
+}
+
+function createRateLimiter({ windowMs, max, methods = [], message = '요청이 너무 많습니다. 잠시 후 다시 시도하세요.' }) {
+  const hits = new Map();
+  const methodSet = new Set(methods.map((method) => method.toUpperCase()));
+
+  return (req, res, next) => {
+    if (methodSet.size && !methodSet.has(req.method.toUpperCase())) {
+      next();
+      return;
+    }
+
+    const now = Date.now();
+    const key = getClientAddress(req);
+    const recent = (hits.get(key) || []).filter((timestamp) => now - timestamp < windowMs);
+
+    if (recent.length >= max) {
+      const retryAfterMs = windowMs - (now - recent[0]);
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+      res.status(429).json({ message });
+      return;
+    }
+
+    recent.push(now);
+    hits.set(key, recent);
+
+    if (hits.size > 2000) {
+      for (const [hitKey, timestamps] of hits.entries()) {
+        const active = timestamps.filter((timestamp) => now - timestamp < windowMs);
+        if (active.length) {
+          hits.set(hitKey, active);
+        } else {
+          hits.delete(hitKey);
+        }
+      }
+    }
+
+    next();
+  };
+}
+
+function getClientAddress(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return req.ip || forwarded || req.socket?.remoteAddress || 'unknown';
+}
+
 async function requireAdmin(req, res, next) {
   const providedToken = String(req.header('x-admin-token') || '').trim();
   if (!adminToken || providedToken !== adminToken) {
     const bearerToken = getBearerToken(req);
     if (bearerToken) {
       try {
-        const payload = jwt.verify(bearerToken, jwtSecret);
+        const payload = verifyAuthToken(bearerToken);
         const user = await getUserById(payload.sub);
         if (user?.provider === 'admin') {
           req.user = user;
@@ -1051,7 +1201,9 @@ async function requireAdmin(req, res, next) {
         : 'Railway Variables에 설정한 ADMIN_TOKEN 값을 입력하거나 Admin 계정으로 로그인하세요.'
       : adminTokenFallbackEnabled
       ? '로컬 개발 서버는 기본 관리자 토큰 admin123을 사용합니다.'
-      : '운영 서버에는 ADMIN_TOKEN이 설정되어 있지 않습니다. Railway Variables에 ADMIN_TOKEN을 설정하거나 Admin 계정으로 로그인하세요.';
+      : isProductionDeployment
+      ? '운영 서버에는 ADMIN_TOKEN이 설정되어 있지 않습니다. Railway Variables에 ADMIN_TOKEN을 설정하거나 Admin 계정으로 로그인하세요.'
+      : '로컬 기본 admin123은 비활성화되어 있습니다. ADMIN_TOKEN을 설정하거나 ALLOW_LOCAL_ADMIN123=true를 명시적으로 켜세요.';
     res.status(401).json({ message: `관리자 토큰이 올바르지 않습니다. ${tokenHint}` });
     return;
   }
@@ -1066,7 +1218,7 @@ async function optionalAuth(req, res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, jwtSecret);
+    const payload = verifyAuthToken(token);
     const user = await getUserById(payload.sub);
     if (user) {
       req.user = user;
@@ -1085,7 +1237,7 @@ async function requireAuth(req, res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, jwtSecret);
+    const payload = verifyAuthToken(token);
     const user = await getUserById(payload.sub);
     if (!user) {
       res.status(401).json({ message: '사용자를 찾을 수 없습니다.' });
@@ -1277,7 +1429,27 @@ function escapeLike(value) {
 }
 
 function createAuthToken(user) {
-  return jwt.sign({ sub: String(user.id), nickname: user.nickname }, jwtSecret, { expiresIn: '7d' });
+  return jwt.sign(
+    {
+      sub: String(user.id),
+      nickname: user.nickname,
+      provider: user.provider,
+      jti: randomUUID()
+    },
+    jwtSecret,
+    {
+      expiresIn: jwtExpiresIn,
+      issuer: jwtIssuer,
+      audience: jwtAudience
+    }
+  );
+}
+
+function verifyAuthToken(token) {
+  return jwt.verify(token, jwtSecret, {
+    issuer: jwtIssuer,
+    audience: jwtAudience
+  });
 }
 
 function publicUser(user) {

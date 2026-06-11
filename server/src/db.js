@@ -77,7 +77,7 @@ export function getStorageInfo() {
   const warning = isRender || (isRailway && !process.env.RAILWAY_VOLUME_MOUNT_PATH && !process.env.PUZZLE_TOWER_DATA_DIR && !process.env.DATA_DIR);
   const message = isRailway
     ? process.env.RAILWAY_VOLUME_MOUNT_PATH
-      ? `Railway Volume에 SQLite 데이터를 저장 중입니다: ${dataDir}`
+      ? 'Railway Volume에 SQLite 데이터를 저장 중입니다.'
       : 'Railway 앱 서비스에 Volume이 연결되지 않았습니다. SQLite 데이터가 재배포 때 사라질 수 있습니다.'
     : isRender
     ? usesVarData
@@ -89,9 +89,8 @@ export function getStorageInfo() {
     driver: 'sqlite',
     databaseConfigured: Boolean(postgresUrl || postgresEnvConfig),
     postgresConfigSource: postgresConfigSource || null,
-    postgresEnv: getPostgresEnvStatus(),
-    dataDir,
-    configuredDataDir: configuredDataDir || null,
+    postgresEnvConfigured: Boolean(postgresEnvConfig),
+    storagePathConfigured: Boolean(configuredDataDir),
     railway: isRailway,
     railwayVolume: Boolean(process.env.RAILWAY_VOLUME_MOUNT_PATH),
     render: isRender,

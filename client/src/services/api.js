@@ -7,6 +7,8 @@ const isLocalFrontend =
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL || (isLocalFrontend ? localApiBaseUrl : deployedApiBaseUrl));
 const authTokenKey = 'puzzle-tower-auth-token';
 
+clearLegacyAuthToken();
+
 function normalizeApiBaseUrl(value) {
   const trimmed = String(value || '').trim();
   if (!trimmed) {
@@ -17,14 +19,34 @@ function normalizeApiBaseUrl(value) {
 }
 
 export function getAuthToken() {
-  return localStorage.getItem(authTokenKey) || '';
+  return getSessionStorage()?.getItem(authTokenKey) || '';
 }
 
 export function setAuthToken(token) {
+  const storage = getSessionStorage();
   if (token) {
-    localStorage.setItem(authTokenKey, token);
+    storage?.setItem(authTokenKey, token);
   } else {
-    localStorage.removeItem(authTokenKey);
+    storage?.removeItem(authTokenKey);
+  }
+  clearLegacyAuthToken();
+}
+
+function getSessionStorage() {
+  try {
+    return typeof window !== 'undefined' ? window.sessionStorage : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function clearLegacyAuthToken() {
+  try {
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(authTokenKey);
+    }
+  } catch (error) {
+    // Storage can be blocked by browser privacy settings.
   }
 }
 
