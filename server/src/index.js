@@ -2557,7 +2557,9 @@ async function sendWithResend({ to, subject, text, logLabel }) {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'Idempotency-Key': randomUUID()
+          Accept: 'application/json',
+          'Idempotency-Key': randomUUID(),
+          'User-Agent': 'PuzzleTower/1.0 (+https://habang2222.github.io/Puzzle_Tower/)'
         },
         body: JSON.stringify({
           from,
@@ -2577,7 +2579,7 @@ async function sendWithResend({ to, subject, text, logLabel }) {
       return {
         provider: 'resend',
         ok: false,
-        reason: `resend_http_${response.status}`
+        reason: classifyResendFailure(response.status, errorBody)
       };
     }
 
@@ -2639,6 +2641,26 @@ function sanitizeMailError(message) {
     return 'network_failed';
   }
   return normalized.replace(/[^a-z0-9_-]/g, '_').slice(0, 80) || 'unknown_error';
+}
+
+function classifyResendFailure(status, body) {
+  const normalized = String(body || '').toLowerCase();
+  if (normalized.includes('not verified') || normalized.includes('verify your domain')) {
+    return 'resend_domain_not_verified';
+  }
+  if (normalized.includes('from') && normalized.includes('domain')) {
+    return 'resend_from_domain_mismatch';
+  }
+  if (normalized.includes('own email address') || normalized.includes('testing emails')) {
+    return 'resend_testing_recipient_limited';
+  }
+  if (normalized.includes('api key') || normalized.includes('permission') || normalized.includes('unauthorized')) {
+    return 'resend_auth_or_permission';
+  }
+  if (normalized.includes('user-agent') || normalized.includes('1010') || normalized.includes('access denied')) {
+    return 'resend_user_agent_blocked';
+  }
+  return `resend_http_${status}`;
 }
 
 async function withTimeout(promise, timeoutMs, message) {
