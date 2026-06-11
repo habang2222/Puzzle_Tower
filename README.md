@@ -86,6 +86,8 @@ JWT_EXPIRES_IN=12h
 ALLOW_LOCAL_ADMIN123=false
 EMAIL_VERIFICATION_EXPOSE_CODE=false
 PASSWORD_RESET_EXPOSE_CODE=false
+RESEND_API_KEY=re_xxxxxxxxx
+RESEND_FROM=Puzzle Tower <onboarding@your-verified-domain.com>
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
@@ -101,7 +103,7 @@ When `DATABASE_URL` is set, the backend uses Postgres. Without `DATABASE_URL`, `
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 If environment variables are not available, open the in-app Admin screen, enter the admin setup token, Admin email, and Admin password, then press "Admin 로그인 설정".
 The admin setup token is `ADMIN_TOKEN`, not the Admin login password. The old `admin123` fallback is disabled by default. For a temporary local-only demo, set `ALLOW_LOCAL_ADMIN123=true`; never set that variable on Railway/production. On Railway/production, set a long random `ADMIN_TOKEN` or log in as the `Admin` account; admin APIs also accept the normal Admin login JWT.
-Signup verification codes are stored hashed and expire after 10 minutes. Password reset codes are stored hashed and expire after 15 minutes. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` to send both signup and reset codes by email. For Gmail, use a Google App Password, not the normal Gmail password. Without an email provider, local/dev runs return the code for testing. On production, set `EMAIL_VERIFICATION_EXPOSE_CODE=true` or `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
+Signup verification codes are stored hashed and expire after 10 minutes. Password reset codes are stored hashed and expire after 15 minutes. On Railway, prefer `RESEND_API_KEY` and `RESEND_FROM` because outbound SMTP can time out on lower plans. SMTP remains as a fallback when the host allows it. Without an email provider, local/dev runs return the code for testing. On production, set `EMAIL_VERIFICATION_EXPOSE_CODE=true` or `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
 
 ## API List
 
@@ -401,6 +403,8 @@ ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-this-admin-password
 CLIENT_ORIGIN=https://habang2222.github.io
 CLIENT_URL=https://habang2222.github.io/Puzzle_Tower/
+RESEND_API_KEY=re_xxxxxxxxx
+RESEND_FROM=Puzzle Tower <onboarding@your-verified-domain.com>
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false

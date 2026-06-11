@@ -156,7 +156,7 @@ app.post('/api/auth/email-verification/request', async (req, res) => {
   }
 
   res.status(503).json({
-    message: '메일 서버 설정이 없어 인증 코드를 보낼 수 없습니다. Railway Variables에 SMTP_HOST, SMTP_USER, SMTP_PASS를 설정하세요.'
+    message: '인증 코드 메일 발송에 실패했습니다. Railway에서는 Gmail SMTP가 막힐 수 있으니 RESEND_API_KEY와 RESEND_FROM을 설정하거나 SMTP가 허용되는 플랜을 사용하세요.'
   });
 });
 
@@ -290,7 +290,7 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
     response.resetCode = resetCode;
     response.message = '메일 서버가 없어 화면에 재설정 코드를 표시합니다. 15분 안에 사용하세요.';
   } else {
-    response.message = '메일 서버 설정이 없어 재설정 코드를 보낼 수 없습니다. Railway Variables에 SMTP_HOST, SMTP_USER, SMTP_PASS를 설정하세요.';
+    response.message = '비밀번호 재설정 메일 발송에 실패했습니다. Railway에서는 Gmail SMTP가 막힐 수 있으니 RESEND_API_KEY와 RESEND_FROM을 설정하거나 SMTP가 허용되는 플랜을 사용하세요.';
   }
   res.json(response);
 });
@@ -2457,6 +2457,13 @@ async function sendPasswordResetEmail(email, resetCode) {
 }
 
 async function sendAuthEmail({ to, subject, text, logLabel }) {
+  if (hasResendConfig()) {
+    const sentWithResend = await sendWithResend({ to, subject, text, logLabel });
+    if (sentWithResend) {
+      return true;
+    }
+  }
+
   const host = String(process.env.SMTP_HOST || '').trim();
   const user = String(process.env.SMTP_USER || '').trim();
   const pass = String(process.env.SMTP_PASS || '').trim();
@@ -2498,6 +2505,59 @@ async function sendAuthEmail({ to, subject, text, logLabel }) {
   }
 }
 
+function hasResendConfig() {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const from = getResendFrom();
+  return Boolean(apiKey && from && !hasPlaceholderResendValue({ apiKey, from }));
+}
+
+function getResendFrom() {
+  return String(process.env.RESEND_FROM || process.env.EMAIL_FROM || '').trim();
+}
+
+async function sendWithResend({ to, subject, text, logLabel }) {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const from = getResendFrom();
+
+  try {
+    const response = await withTimeout(
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': randomUUID()
+        },
+        body: JSON.stringify({
+          from,
+          to: [to],
+          subject,
+          text,
+          html: `<pre style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; white-space: pre-wrap;">${escapeHtml(text)}</pre>`
+        })
+      }),
+      12000,
+      'Resend API timed out'
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      console.warn(`${logLabel} failed via Resend:`, response.status, errorBody.slice(0, 300));
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.warn(`${logLabel} failed via Resend:`, error.message);
+    return false;
+  }
+}
+
+function hasPlaceholderResendValue({ apiKey, from }) {
+  const values = [apiKey, from].map((value) => value.toLowerCase());
+  return values.some((value) => value.includes('re_xxxxx') || value.includes('your-email') || value.includes('replace-this'));
+}
+
 function hasPlaceholderSmtpValue({ host, user, pass }) {
   const values = [host, user, pass].map((value) => value.toLowerCase());
   return values.some((value) => value.includes('your-email') || value.includes('your-gmail-app-password') || value.includes('replace-this'));
@@ -2519,6 +2579,15 @@ async function withTimeout(promise, timeoutMs, message) {
 
 function isEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function safeParseJson(value, fallback) {
