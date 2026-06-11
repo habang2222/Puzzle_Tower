@@ -2461,7 +2461,7 @@ async function sendAuthEmail({ to, subject, text, logLabel }) {
   const user = String(process.env.SMTP_USER || '').trim();
   const pass = String(process.env.SMTP_PASS || '').trim();
 
-  if (!host || !user || !pass) {
+  if (!host || !user || !pass || hasPlaceholderSmtpValue({ host, user, pass })) {
     return false;
   }
 
@@ -2475,18 +2475,45 @@ async function sendAuthEmail({ to, subject, text, logLabel }) {
       host,
       port,
       secure,
+      requireTLS: !secure,
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
       auth: { user, pass }
     });
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM || user,
-      to,
-      subject,
-      text
-    });
+    await withTimeout(
+      transporter.sendMail({
+        from: process.env.SMTP_FROM || user,
+        to,
+        subject,
+        text
+      }),
+      12000,
+      'SMTP send timed out'
+    );
     return true;
   } catch (error) {
     console.warn(`${logLabel} failed:`, error.message);
     return false;
+  }
+}
+
+function hasPlaceholderSmtpValue({ host, user, pass }) {
+  const values = [host, user, pass].map((value) => value.toLowerCase());
+  return values.some((value) => value.includes('your-email') || value.includes('your-gmail-app-password') || value.includes('replace-this'));
+}
+
+async function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
