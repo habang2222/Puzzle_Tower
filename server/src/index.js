@@ -743,8 +743,34 @@ app.post('/api/records', optionalAuth, async (req, res) => {
 app.get('/api/rankings', async (req, res) => {
   const limit = clamp(Number(req.query.limit || 20), 1, 100);
   const stageId = req.query.stageId ? Number(req.query.stageId) : null;
-  const params = stageId ? [stageId, limit] : [limit];
-  const filter = stageId ? 'WHERE r.stage_id = ?' : '';
+
+  if (stageId) {
+    const rankings = await all(
+      `
+      SELECT
+        r.id,
+        u.nickname,
+        s.id AS stage_id,
+        s.level,
+        s.title,
+        s.is_official,
+        r.clear_time,
+        r.move_used,
+        r.score,
+        r.created_at
+      FROM records r
+      JOIN users u ON u.id = r.user_id
+      JOIN stages s ON s.id = r.stage_id
+      WHERE r.stage_id = ?
+      ORDER BY r.clear_time ASC, r.move_used ASC, r.score DESC, r.created_at ASC, r.id ASC
+      LIMIT ?
+      `,
+      [stageId, limit]
+    );
+
+    res.json(rankings);
+    return;
+  }
 
   const rankings = await all(
     `
@@ -762,11 +788,22 @@ app.get('/api/rankings', async (req, res) => {
     FROM records r
     JOIN users u ON u.id = r.user_id
     JOIN stages s ON s.id = r.stage_id
-    ${filter}
-    ORDER BY r.clear_time ASC, r.move_used ASC, r.score DESC
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM records better
+      WHERE better.stage_id = r.stage_id
+        AND (
+          better.score > r.score
+          OR (better.score = r.score AND better.clear_time < r.clear_time)
+          OR (better.score = r.score AND better.clear_time = r.clear_time AND better.move_used < r.move_used)
+          OR (better.score = r.score AND better.clear_time = r.clear_time AND better.move_used = r.move_used AND better.created_at < r.created_at)
+          OR (better.score = r.score AND better.clear_time = r.clear_time AND better.move_used = r.move_used AND better.created_at = r.created_at AND better.id < r.id)
+        )
+    )
+    ORDER BY r.score DESC, r.clear_time ASC, r.move_used ASC, r.created_at ASC, r.id ASC
     LIMIT ?
     `,
-    params
+    [limit]
   );
 
   res.json(rankings);
@@ -1395,13 +1432,26 @@ function isBetterRecord(next, previous) {
   if (!previous) {
     return true;
   }
-  if (next.clear_time !== previous.clear_time) {
-    return next.clear_time < previous.clear_time;
+  const nextClearTime = Number(next.clear_time ?? next.clearTime);
+  const previousClearTime = Number(previous.clear_time ?? previous.clearTime);
+  const nextMoveUsed = Number(next.move_used ?? next.moveUsed);
+  const previousMoveUsed = Number(previous.move_used ?? previous.moveUsed);
+  const nextScore = Number(next.score);
+  const previousScore = Number(previous.score);
+
+  if (!Number.isFinite(previousClearTime) || !Number.isFinite(previousMoveUsed) || !Number.isFinite(previousScore)) {
+    return true;
   }
-  if (next.move_used !== previous.move_used) {
-    return next.move_used < previous.move_used;
+  if (!Number.isFinite(nextClearTime) || !Number.isFinite(nextMoveUsed) || !Number.isFinite(nextScore)) {
+    return false;
   }
-  return next.score > previous.score;
+  if (nextClearTime !== previousClearTime) {
+    return nextClearTime < previousClearTime;
+  }
+  if (nextMoveUsed !== previousMoveUsed) {
+    return nextMoveUsed < previousMoveUsed;
+  }
+  return nextScore > previousScore;
 }
 
 function validateRecordProof(proof, { stage, stageId, clearTime, moveUsed }) {

@@ -457,7 +457,7 @@ export default function App() {
   }, [game.status, goNextStage, restartStage, view]);
 
   const loadRankings = useCallback(() => {
-    fetchRankings(rankingStageId)
+    fetchRankings(rankingStageId, rankingStageId ? 20 : 100)
       .then((rows) => {
         setApiOnline(true);
         setRankings(rows);
@@ -1986,7 +1986,7 @@ export default function App() {
             <div className="section-heading">
               <div>
                 <p className="eyebrow">LEADERBOARD</p>
-                <h2>전체 랭킹</h2>
+                <h2>{rankingStageId ? '스테이지 랭킹' : '전체 랭킹'}</h2>
               </div>
               <div className="ranking-tools">
                 <select value={rankingStageId} onChange={(event) => setRankingStageId(event.target.value)}>
@@ -2003,6 +2003,9 @@ export default function App() {
                 </button>
               </div>
             </div>
+            <p className="result-count">
+              {rankingStageId ? '선택한 스테이지의 20등까지 시간순으로 표시합니다.' : '전체 보기에서는 각 스테이지의 1등만 점수순으로 표시합니다.'}
+            </p>
             <div className="ranking-table">
               <div className="ranking-row heading">
                 <span>순위</span>
