@@ -73,6 +73,13 @@ export async function registerUser(payload) {
   });
 }
 
+export async function requestSignupVerification(payload) {
+  return request('/api/auth/email-verification/request', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function loginUser(payload) {
   return request('/api/auth/login', {
     method: 'POST',

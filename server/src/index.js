@@ -65,6 +65,7 @@ app.use(
 );
 app.use('/api/auth/login', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 20, methods: ['POST'] }));
 app.use('/api/auth/register', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 12, methods: ['POST'] }));
+app.use('/api/auth/email-verification', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 8, methods: ['POST'] }));
 app.use('/api/auth/password-reset', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 8, methods: ['POST'] }));
 app.use('/api/admin', createRateLimiter({ windowMs: 60 * 1000, max: 40 }));
 app.use('/api/community/messages', createRateLimiter({ windowMs: 10 * 1000, max: 6, methods: ['POST'] }));
@@ -86,11 +87,85 @@ app.get('/api/storage/status', (req, res) => {
   res.json(getStorageInfo());
 });
 
+app.post('/api/auth/email-verification/request', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const nicknameRaw = String(req.body?.nickname || '').trim();
+
+  if (!isEmail(email)) {
+    res.status(400).json({ message: '인증 코드를 받을 올바른 이메일을 입력하세요.' });
+    return;
+  }
+
+  if (nicknameRaw) {
+    const nicknameValidation = validateNicknameInput(nicknameRaw);
+    if (!nicknameValidation.ok) {
+      res.status(400).json({ message: nicknameValidation.message });
+      return;
+    }
+    if (await get('SELECT id FROM users WHERE nickname_key = ? OR LOWER(nickname) = ?', [nicknameValidation.key, nicknameValidation.key])) {
+      res.status(409).json({ message: '이미 사용 중인 닉네임입니다.' });
+      return;
+    }
+  }
+
+  if (await get('SELECT id FROM users WHERE email = ?', [email])) {
+    res.status(409).json({ message: '이미 가입된 이메일입니다.' });
+    return;
+  }
+
+  const recent = await get(
+    `
+    SELECT created_at
+    FROM email_verification_tokens
+    WHERE email = ? AND created_at >= datetime('now', '-60 seconds')
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [email]
+  );
+  if (recent) {
+    res.status(429).json({ message: '회원가입 인증 코드는 1분에 한 번만 요청할 수 있습니다.' });
+    return;
+  }
+
+  const verificationCode = String(randomInt(100000, 1000000));
+  const tokenHash = await bcrypt.hash(verificationCode, 10);
+  await run('UPDATE email_verification_tokens SET used_at = CURRENT_TIMESTAMP WHERE email = ? AND used_at IS NULL', [email]);
+  await insert(
+    `
+    INSERT INTO email_verification_tokens (email, token_hash, expires_at)
+    VALUES (?, ?, datetime('now', '+10 minutes'))
+    `,
+    [email, tokenHash]
+  );
+
+  const emailSent = await sendSignupVerificationEmail(email, verificationCode);
+  const response = { message: '회원가입 인증 코드를 이메일로 보냈습니다. 10분 안에 입력하세요.' };
+  if (emailSent) {
+    res.json(response);
+    return;
+  }
+
+  if (process.env.NODE_ENV !== 'production' || process.env.EMAIL_VERIFICATION_EXPOSE_CODE === 'true') {
+    res.json({
+      ...response,
+      verificationCode,
+      message: '메일 서버가 없어 화면에 회원가입 인증 코드를 표시합니다. 10분 안에 입력하세요.'
+    });
+    return;
+  }
+
+  res.status(503).json({
+    message: '메일 서버 설정이 없어 인증 코드를 보낼 수 없습니다. Railway Variables에 SMTP_HOST, SMTP_USER, SMTP_PASS를 설정하세요.'
+  });
+});
+
 app.post('/api/auth/register', async (req, res) => {
   const nicknameValidation = validateNicknameInput(req.body?.nickname);
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
   const confirmPassword = String(req.body?.confirmPassword || '');
+  const verificationCode = String(req.body?.verificationCode || req.body?.emailCode || req.body?.code || '').trim();
 
   if (!nicknameValidation.ok) {
     res.status(400).json({ message: nicknameValidation.message });
@@ -107,6 +182,11 @@ app.post('/api/auth/register', async (req, res) => {
     return;
   }
 
+  if (!/^\d{6}$/.test(verificationCode)) {
+    res.status(400).json({ message: '이메일로 받은 6자리 인증 코드가 필요합니다.' });
+    return;
+  }
+
   if (await get('SELECT id FROM users WHERE email = ?', [email])) {
     res.status(409).json({ message: '이미 가입된 이메일입니다.' });
     return;
@@ -114,6 +194,12 @@ app.post('/api/auth/register', async (req, res) => {
 
   if (await get('SELECT id FROM users WHERE nickname_key = ? OR LOWER(nickname) = ?', [nicknameValidation.key, nicknameValidation.key])) {
     res.status(409).json({ message: '이미 사용 중인 닉네임입니다.' });
+    return;
+  }
+
+  const verifiedEmailToken = await findValidEmailVerification(email, verificationCode);
+  if (!verifiedEmailToken) {
+    res.status(400).json({ message: '이메일 인증 코드가 올바르지 않거나 만료되었습니다.' });
     return;
   }
 
@@ -138,6 +224,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   const user = await getUserById(id);
+  await run('UPDATE email_verification_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [verifiedEmailToken.id]);
   res.status(201).json({ token: createAuthToken(user), user: publicUser(user) });
 });
 
@@ -203,7 +290,7 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
     response.resetCode = resetCode;
     response.message = '메일 서버가 없어 화면에 재설정 코드를 표시합니다. 15분 안에 사용하세요.';
   } else {
-    response.message = '메일 서버 설정이 없어 재설정 코드를 보낼 수 없습니다. Render 환경변수 SMTP_HOST, SMTP_USER, SMTP_PASS를 설정하세요.';
+    response.message = '메일 서버 설정이 없어 재설정 코드를 보낼 수 없습니다. Railway Variables에 SMTP_HOST, SMTP_USER, SMTP_PASS를 설정하세요.';
   }
   res.json(response);
 });
@@ -1285,6 +1372,27 @@ async function getUserById(id) {
   return await get('SELECT * FROM users WHERE id = ?', [Number(id)]);
 }
 
+async function findValidEmailVerification(email, verificationCode) {
+  const tokens = await all(
+    `
+    SELECT *
+    FROM email_verification_tokens
+    WHERE email = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+    ORDER BY created_at DESC
+    LIMIT 5
+    `,
+    [email]
+  );
+
+  for (const token of tokens) {
+    if (await bcrypt.compare(verificationCode, token.token_hash)) {
+      return token;
+    }
+  }
+
+  return null;
+}
+
 async function getStageById(id) {
   return await get(
     `
@@ -2330,7 +2438,25 @@ function normalizeVisionRadius(value) {
   return clamp(radius, 1, 10);
 }
 
+async function sendSignupVerificationEmail(email, verificationCode) {
+  return await sendAuthEmail({
+    to: email,
+    subject: 'Puzzle Tower 회원가입 인증 코드',
+    text: `Puzzle Tower 회원가입 인증 코드: ${verificationCode}\n\n이 코드는 10분 뒤 만료됩니다. 본인이 요청하지 않았다면 이 메일을 무시하세요.`,
+    logLabel: 'Signup verification email'
+  });
+}
+
 async function sendPasswordResetEmail(email, resetCode) {
+  return await sendAuthEmail({
+    to: email,
+    subject: 'Puzzle Tower 비밀번호 재설정 코드',
+    text: `Puzzle Tower 비밀번호 재설정 코드: ${resetCode}\n\n이 코드는 15분 뒤 만료됩니다. 본인이 요청하지 않았다면 이 메일을 무시하세요.`,
+    logLabel: 'Password reset email'
+  });
+}
+
+async function sendAuthEmail({ to, subject, text, logLabel }) {
   const host = String(process.env.SMTP_HOST || '').trim();
   const user = String(process.env.SMTP_USER || '').trim();
   const pass = String(process.env.SMTP_PASS || '').trim();
@@ -2353,13 +2479,13 @@ async function sendPasswordResetEmail(email, resetCode) {
     });
     await transporter.sendMail({
       from: process.env.SMTP_FROM || user,
-      to: email,
-      subject: 'Puzzle Tower 비밀번호 재설정 코드',
-      text: `Puzzle Tower 비밀번호 재설정 코드: ${resetCode}\n\n이 코드는 15분 뒤 만료됩니다. 본인이 요청하지 않았다면 이 메일을 무시하세요.`
+      to,
+      subject,
+      text
     });
     return true;
   } catch (error) {
-    console.warn('Password reset email failed:', error.message);
+    console.warn(`${logLabel} failed:`, error.message);
     return false;
   }
 }

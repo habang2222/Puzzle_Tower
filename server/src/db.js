@@ -192,6 +192,15 @@ async function migratePostgres() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS email_verification_tokens (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS custom_blocks (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id),
@@ -315,6 +324,15 @@ function migrateSqlite() {
       used_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS email_verification_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS custom_blocks (
@@ -497,6 +515,7 @@ async function ensureUniqueIndexes() {
   await createIndex('CREATE INDEX IF NOT EXISTS idx_comment_reports_status ON comment_reports(status, created_at DESC)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_community_messages_created ON community_messages(is_deleted, created_at DESC)');
   await createIndex('CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at)');
+  await createIndex('CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_email ON email_verification_tokens(email, expires_at)');
 }
 
 async function createIndex(sql) {
@@ -532,6 +551,7 @@ function toPostgresSql(sql, options = {}) {
   let transformed = String(sql)
     .replace(/datetime\('now',\s*'-60 seconds'\)/gi, "(CURRENT_TIMESTAMP - INTERVAL '60 seconds')")
     .replace(/datetime\('now',\s*'\+15 minutes'\)/gi, "(CURRENT_TIMESTAMP + INTERVAL '15 minutes')")
+    .replace(/datetime\('now',\s*'\+10 minutes'\)/gi, "(CURRENT_TIMESTAMP + INTERVAL '10 minutes')")
     .replace(/\?/g, () => `$${++parameterIndex}`);
 
   if (options.returningId && /^\s*INSERT\b/i.test(transformed) && !/\bRETURNING\b/i.test(transformed)) {

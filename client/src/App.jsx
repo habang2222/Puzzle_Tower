@@ -71,6 +71,7 @@ import {
   reactToStage,
   registerUser,
   reportComment,
+  requestSignupVerification,
   requestPasswordReset,
   saveRecord,
   setAuthToken,
@@ -118,14 +119,71 @@ const defaultBlockCode = {
     }
   ]
 };
+const blockTemplates = [
+  {
+    label: '일방통행',
+    code: defaultBlockCode
+  },
+  {
+    label: '느림',
+    code: {
+      name: '진흙',
+      tile: 'C',
+      color: '#a78bfa',
+      effect: 'slow',
+      moveCost: 2,
+      description: '이 블록 위에 서 있으면 이동 횟수를 2칸 사용합니다.',
+      message: '진흙을 밟아 이동력이 더 소모됩니다.'
+    }
+  },
+  {
+    label: '추적',
+    code: {
+      name: '추적 감시자',
+      tile: 'D',
+      color: '#ef4444',
+      effect: 'chase',
+      moveCost: 1,
+      description: '플레이어가 한 번 움직일 때마다 이 블록도 플레이어 쪽으로 한 칸 따라옵니다. 닿으면 게임오버입니다.',
+      message: '추적 블록에 닿았습니다. 게임오버!'
+    }
+  },
+  {
+    label: '자석',
+    code: {
+      name: '자석 발판',
+      tile: 'H',
+      color: '#38bdf8',
+      effect: 'floor',
+      moveCost: 1,
+      description: '이 발판을 밟으면 맵에 있는 C 블록이 플레이어 방향으로 한 칸 움직입니다.',
+      message: '자석이 C 블록을 끌어당겼습니다.',
+      moveBlock: [{ targetTile: 'C', direction: 'towardPlayer', distance: 1, limit: 4 }]
+    }
+  },
+  {
+    label: '시간 함정',
+    code: {
+      name: '지연 함정 발판',
+      tile: 'H',
+      color: '#38bdf8',
+      effect: 'floor',
+      moveCost: 1,
+      description: '이 블록을 밟으면 4초 뒤 S 표시칸이 X 함정으로 바뀝니다.',
+      message: '4초 뒤 함정이 켜집니다.',
+      change: [{ targetTile: 'S', tile: 'X', afterSeconds: 4 }]
+    }
+  }
+];
 
 export default function App() {
   const [view, setView] = useState('home');
   const [nickname, setNickname] = useState(() => localStorage.getItem(nicknameKey) || 'player');
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login');
-  const [authForm, setAuthForm] = useState({ nickname: '', email: '', password: '', confirmPassword: '', resetCode: '' });
+  const [authForm, setAuthForm] = useState({ nickname: '', email: '', password: '', confirmPassword: '', resetCode: '', verificationCode: '' });
   const [passwordResetStep, setPasswordResetStep] = useState('request');
+  const [signupCodeSent, setSignupCodeSent] = useState(false);
   const [authMessage, setAuthMessage] = useState('');
   const [storageStatus, setStorageStatus] = useState(null);
   const [stages, setStages] = useState(fallbackStages.map((stage) => ({ ...stage, isOfficial: true })));
@@ -811,6 +869,28 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
+  const requestSignupCode = async () => {
+    setAuthMessage('');
+    if (!authForm.email.trim()) {
+      setAuthMessage('인증 코드를 받을 이메일을 입력하세요.');
+      return;
+    }
+
+    try {
+      const result = await requestSignupVerification({
+        email: authForm.email,
+        nickname: authForm.nickname
+      });
+      setSignupCodeSent(true);
+      setAuthMessage(result.verificationCode ? `${result.message} 코드: ${result.verificationCode}` : result.message);
+      if (result.verificationCode) {
+        setAuthForm((current) => ({ ...current, verificationCode: result.verificationCode }));
+      }
+    } catch (error) {
+      setAuthMessage(error.message);
+    }
+  };
+
   const submitAuth = async (event) => {
     event.preventDefault();
     setAuthMessage('');
@@ -839,6 +919,10 @@ export default function App() {
 
       if (authMode === 'signup' && authForm.password !== authForm.confirmPassword) {
         setAuthMessage('비밀번호 확인이 일치하지 않습니다.');
+        return;
+      }
+      if (authMode === 'signup' && !/^\d{6}$/.test(authForm.verificationCode.trim())) {
+        setAuthMessage('이메일로 받은 6자리 인증 코드를 입력하세요.');
         return;
       }
 
@@ -1291,11 +1375,11 @@ export default function App() {
             ) : (
               <form className="auth-card" onSubmit={submitAuth}>
                 <div className="auth-tabs">
-                  <button className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setPasswordResetStep('request'); }} type="button">
+                  <button className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setPasswordResetStep('request'); setSignupCodeSent(false); }} type="button">
                     <LogIn size={17} />
                     <span>로그인</span>
                   </button>
-                  <button className={authMode === 'signup' ? 'active' : ''} onClick={() => { setAuthMode('signup'); setPasswordResetStep('request'); }} type="button">
+                  <button className={authMode === 'signup' ? 'active' : ''} onClick={() => { setAuthMode('signup'); setPasswordResetStep('request'); setSignupCodeSent(false); }} type="button">
                     <UserPlus size={17} />
                     <span>회원가입</span>
                   </button>
@@ -1314,10 +1398,31 @@ export default function App() {
                 <label htmlFor="auth-email">이메일</label>
                 <input
                   id="auth-email"
-                  onChange={(event) => setAuthForm((current) => ({ ...current, email: event.target.value }))}
+                  onChange={(event) => {
+                    setAuthForm((current) => ({ ...current, email: event.target.value, verificationCode: authMode === 'signup' ? '' : current.verificationCode }));
+                    if (authMode === 'signup') {
+                      setSignupCodeSent(false);
+                    }
+                  }}
                   type="email"
                   value={authForm.email}
                 />
+                {authMode === 'signup' && (
+                  <div className="verification-row">
+                    <button onClick={requestSignupCode} type="button">
+                      <Mail size={17} />
+                      <span>{signupCodeSent ? '인증 코드 다시 받기' : '인증 코드 받기'}</span>
+                    </button>
+                    <input
+                      aria-label="회원가입 이메일 인증 코드"
+                      inputMode="numeric"
+                      maxLength={6}
+                      onChange={(event) => setAuthForm((current) => ({ ...current, verificationCode: event.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                      placeholder="6자리 코드"
+                      value={authForm.verificationCode}
+                    />
+                  </div>
+                )}
                 {authMode === 'reset' && passwordResetStep === 'confirm' && (
                   <>
                     <label htmlFor="reset-code">재설정 코드</label>
@@ -1360,7 +1465,7 @@ export default function App() {
                     <span>{authMode === 'signup' ? '가입하기' : authMode === 'reset' ? (passwordResetStep === 'request' ? '코드 받기' : '비밀번호 변경') : '로그인'}</span>
                   </button>
                   {authMode !== 'reset' ? (
-                    <button onClick={() => { setAuthMode('reset'); setPasswordResetStep('request'); setAuthMessage(''); }} type="button">
+                    <button onClick={() => { setAuthMode('reset'); setPasswordResetStep('request'); setSignupCodeSent(false); setAuthMessage(''); }} type="button">
                       <KeyRound size={18} />
                       <span>비밀번호 찾기</span>
                     </button>
@@ -1823,6 +1928,23 @@ export default function App() {
                       <span>설명서</span>
                     </button>
                   </div>
+                  <div className="block-template-row" aria-label="블록 코드 예시">
+                    {blockTemplates.map((template) => (
+                      <button
+                        key={template.label}
+                        onClick={() => {
+                          setEditingBlockId(null);
+                          setBlockDraft(JSON.stringify(template.code, null, 2));
+                          setBlockMessage(`${template.label} 예시를 불러왔습니다.`);
+                        }}
+                        type="button"
+                      >
+                        <Code2 size={15} />
+                        <span>{template.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <BlockDraftPreview draft={blockDraft} />
                   <textarea
                     className="block-code"
                     onChange={(event) => setBlockDraft(event.target.value)}
@@ -2265,19 +2387,45 @@ function GameBoard({ game, showPathHint = false }) {
 }
 
 function BlockDescriptionPanel({ block }) {
+  const [copyStatus, setCopyStatus] = useState('');
+
+  useEffect(() => {
+    setCopyStatus('');
+  }, [block?.tile, block?.name]);
+
   if (!block) {
     return null;
   }
 
   const description = block.description || createBlockSummary(block);
+  const codeText = getBlockCodeText(block);
+  const previewCodeText = getBlockCodeText(block, { preview: true });
   return (
     <aside className="block-description" style={{ '--hint-color': block.color }} aria-live="polite">
       <span className="block-description-chip" style={tileStyle(block.tile, [block])}>
         {block.tile}
       </span>
-      <div>
+      <div className="block-description-body">
         <strong>{block.name}</strong>
         <p>{description}</p>
+        <details className="inline-code-details">
+          <summary>
+            <Code2 size={15} />
+            <span>{block.readOnlyCode ? '내장 코드 보기' : '블록 코드 보기'}</span>
+          </summary>
+          <pre>{previewCodeText}</pre>
+          <button
+            onClick={async () => {
+              const ok = await copyText(codeText);
+              setCopyStatus(ok ? '코드를 복사했습니다.' : '복사를 허용하지 않는 브라우저입니다.');
+            }}
+            type="button"
+          >
+            <Copy size={15} />
+            <span>코드 복사</span>
+          </button>
+          {copyStatus && <span className="copy-status">{copyStatus}</span>}
+        </details>
       </div>
     </aside>
   );
@@ -2356,9 +2504,37 @@ function BuilderBoard({ board, customBlocks, onPaint }) {
   );
 }
 
+function BlockDraftPreview({ draft }) {
+  const parsed = parseBlockDraft(draft);
+  if (!parsed.ok) {
+    return (
+      <div className="block-draft-preview invalid">
+        <strong>코드 오류</strong>
+        <span>{parsed.message}</span>
+      </div>
+    );
+  }
+
+  const block = parsed.block;
+  return (
+    <div className="block-draft-preview valid">
+      <span className="palette-chip custom" style={tileStyle(block.tile, [block])}>
+        {block.tile}
+      </span>
+      <div>
+        <strong>{block.name}</strong>
+        <span>{formatBlockEffect(block)} · 이동 {block.moveCost} · {createBlockRuleSummary(block) || '기본 규칙'}</span>
+      </div>
+    </div>
+  );
+}
+
 function BlockItem({ block, onDownload, onEdit, onRemove }) {
+  const [copyStatus, setCopyStatus] = useState('');
   const summary = block.description || createBlockSummary(block);
   const ruleSummary = createBlockRuleSummary(block);
+  const codeText = getBlockCodeText(block);
+  const previewCodeText = getBlockCodeText(block, { preview: true });
   return (
     <div className="block-item">
       <span className="palette-chip custom" style={tileStyle(block.tile, [block])}>
@@ -2372,6 +2548,24 @@ function BlockItem({ block, onDownload, onEdit, onRemove }) {
         <p className="block-item-description">{summary}</p>
         {ruleSummary && <span className="block-item-rule">{ruleSummary}</span>}
         {block.tags?.length > 0 && <TagList tags={block.tags} />}
+        <details className="inline-code-details compact">
+          <summary>
+            <Code2 size={15} />
+            <span>코드 보기</span>
+          </summary>
+          <pre>{previewCodeText}</pre>
+          <button
+            onClick={async () => {
+              const ok = await copyText(codeText);
+              setCopyStatus(ok ? '복사됨' : '복사 실패');
+            }}
+            type="button"
+          >
+            <Copy size={15} />
+            <span>복사</span>
+          </button>
+          {copyStatus && <span className="copy-status">{copyStatus}</span>}
+        </details>
       </div>
       <div className="block-actions">
         <button aria-label={`${block.name} 다운로드`} onClick={() => onDownload(block)} type="button">
@@ -2630,6 +2824,19 @@ effect:
 - push: 플레이어가 밀 수 있는 블록
 - chase: 플레이어 쪽으로 따라오는 위험 블록
 
+기본 포탈:
+- A/B 같은 포탈은 커스텀 블록으로 저장하는 코드가 아니라 게임 엔진에 들어있는 기본 타일입니다.
+- 맵에 같은 알파벳 포탈을 2개 놓으면 서로 연결됩니다.
+- 포탈 A 읽기 전용 코드 예시:
+{
+  "name": "포탈 A",
+  "tile": "A",
+  "effect": "teleport",
+  "builtIn": true,
+  "pairRule": "맵 안에 A를 2개 배치하면 서로 연결됩니다.",
+  "description": "기본 내장 포탈입니다. 커스텀 블록 코드로 저장하지 않고 맵에 직접 배치해서 사용합니다."
+}
+
 방향:
 up, down, left, right, towardPlayer, awayFromPlayer
 
@@ -2766,6 +2973,19 @@ function BlockGuide({ onClose }) {
   "moveCost": 2,
   "description": "이 블록 위에 서 있으면 이동 횟수를 2칸 사용합니다.",
   "message": "진흙을 밟아 이동력이 더 소모됩니다."
+}`}</pre>
+          </section>
+
+          <section>
+            <h3>포탈 코드 보기</h3>
+            <p>A/B 포탈은 저장하는 커스텀 블록이 아니라 기본 내장 타일입니다. 게임 중 포탈 위에 서 있거나 마우스를 올리면 같은 코드를 볼 수 있습니다.</p>
+            <pre>{`{
+  "name": "포탈 A",
+  "tile": "A",
+  "effect": "teleport",
+  "builtIn": true,
+  "pairRule": "맵 안에 A를 2개 배치하면 서로 연결됩니다.",
+  "description": "기본 내장 포탈입니다. 커스텀 블록 코드로 저장하지 않고 맵에 직접 배치해서 사용합니다."
 }`}</pre>
           </section>
 
@@ -4052,7 +4272,10 @@ function getCurrentPlayerBlock(game) {
   if (!tile) {
     return null;
   }
-  return getCustomBlock(tile, game.customBlocks || []) || null;
+  if (tile === '.') {
+    return null;
+  }
+  return getTileInfo(tile, game.customBlocks || []);
 }
 
 function getTileInfo(tile, customBlocks = []) {
@@ -4067,42 +4290,54 @@ function getTileInfo(tile, customBlocks = []) {
       name: '길',
       color: '#475569',
       effect: 'floor',
-      description: '일반 길입니다. 플레이어가 지나갈 수 있습니다.'
+      description: '일반 길입니다. 플레이어가 지나갈 수 있습니다.',
+      code: createBaseTileCode({ tile: '.', name: '길', effect: 'floor', description: '일반 길입니다. 플레이어가 지나갈 수 있습니다.' }),
+      readOnlyCode: true
     },
     '#': {
       tile: '#',
       name: '벽',
       color: '#64748b',
       effect: 'wall',
-      description: '지나갈 수 없는 벽입니다.'
+      description: '지나갈 수 없는 벽입니다.',
+      code: createBaseTileCode({ tile: '#', name: '벽', effect: 'wall', description: '지나갈 수 없는 벽입니다.' }),
+      readOnlyCode: true
     },
     P: {
       tile: 'P',
       name: '시작',
       color: '#38bdf8',
       effect: 'floor',
-      description: '플레이어가 시작하는 위치입니다.'
+      description: '플레이어가 시작하는 위치입니다.',
+      code: createBaseTileCode({ tile: 'P', name: '시작', effect: 'start', description: '플레이어가 시작하는 위치입니다.' }),
+      readOnlyCode: true
     },
     G: {
       tile: 'G',
       name: '목표',
       color: '#42f29b',
       effect: 'goal',
-      description: '이 칸에 도착하면 스테이지를 클리어합니다.'
+      description: '이 칸에 도착하면 스테이지를 클리어합니다.',
+      code: createBaseTileCode({ tile: 'G', name: '목표', effect: 'goal', description: '이 칸에 도착하면 스테이지를 클리어합니다.' }),
+      readOnlyCode: true
     },
     K: {
       tile: 'K',
       name: '열쇠',
       color: '#ffc857',
       effect: 'key',
-      description: '잠금 타일을 열 수 있는 열쇠입니다.'
+      description: '잠금 타일을 열 수 있는 열쇠입니다.',
+      code: createBaseTileCode({ tile: 'K', name: '열쇠', effect: 'key', description: '잠금 타일을 열 수 있는 열쇠입니다.' }),
+      readOnlyCode: true
     },
     L: {
       tile: 'L',
       name: '잠금',
       color: '#ff5d6c',
       effect: 'lock',
-      description: '열쇠가 있어야 지나갈 수 있는 잠금 타일입니다.'
+      description: '열쇠가 있어야 지나갈 수 있는 잠금 타일입니다.',
+      code: createBaseTileCode({ tile: 'L', name: '잠금', effect: 'lock', description: '열쇠가 있어야 지나갈 수 있는 잠금 타일입니다.' }),
+      readOnlyCode: true
     }
   };
 
@@ -4115,12 +4350,50 @@ function getTileInfo(tile, customBlocks = []) {
       tile,
       name: `포탈 ${tile}`,
       color: '#d946ef',
-      effect: 'floor',
-      description: '같은 문자 포탈의 다른 위치로 순간이동합니다.'
+      effect: 'teleport',
+      description: '같은 문자 포탈의 다른 위치로 순간이동합니다. 예를 들어 A가 두 칸 있으면 A에서 다른 A로 이동합니다.',
+      code: {
+        name: `포탈 ${tile}`,
+        tile,
+        effect: 'teleport',
+        builtIn: true,
+        pairRule: '맵 안에 같은 알파벳 포탈을 2개 배치하면 서로 연결됩니다.',
+        description: '기본 내장 포탈입니다. 커스텀 블록 코드로 저장하는 블록이 아니라, 맵에 A/B 같은 같은 문자를 두 개 배치해서 사용합니다.'
+      },
+      readOnlyCode: true
     };
   }
 
   return null;
+}
+
+function createBaseTileCode({ tile, name, effect, description }) {
+  return {
+    name,
+    tile,
+    effect,
+    builtIn: true,
+    description
+  };
+}
+
+function getBlockCodeText(block, options = {}) {
+  const sourceCode = block.code || block;
+  const code = JSON.parse(JSON.stringify(sourceCode));
+  if (options.preview && typeof code.image === 'string' && code.image.length > 120) {
+    code.image = `${code.image.slice(0, 90)}...`;
+    code.imagePreviewNote = '이미지 data URL이 길어서 미리보기에서는 줄였습니다. 복사 버튼은 전체 코드를 복사합니다.';
+  }
+  return JSON.stringify(code, null, 2);
+}
+
+async function copyText(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 function createBlockSummary(block) {

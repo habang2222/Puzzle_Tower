@@ -84,6 +84,7 @@ ADMIN_PASSWORD=replace-this-admin-password
 JWT_SECRET=replace-this-with-a-long-random-value
 JWT_EXPIRES_IN=12h
 ALLOW_LOCAL_ADMIN123=false
+EMAIL_VERIFICATION_EXPOSE_CODE=false
 PASSWORD_RESET_EXPOSE_CODE=false
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
@@ -100,7 +101,7 @@ When `DATABASE_URL` is set, the backend uses Postgres. Without `DATABASE_URL`, `
 `ADMIN_EMAIL` and `ADMIN_PASSWORD` are optional. When set, the server connects those login credentials to the reserved internal `Admin` account on startup. Do not commit real admin credentials to git.
 If environment variables are not available, open the in-app Admin screen, enter the admin setup token, Admin email, and Admin password, then press "Admin 로그인 설정".
 The admin setup token is `ADMIN_TOKEN`, not the Admin login password. The old `admin123` fallback is disabled by default. For a temporary local-only demo, set `ALLOW_LOCAL_ADMIN123=true`; never set that variable on Railway/production. On Railway/production, set a long random `ADMIN_TOKEN` or log in as the `Admin` account; admin APIs also accept the normal Admin login JWT.
-Password reset codes are stored hashed and expire after 15 minutes. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` to send reset codes by email. For Gmail, use a Google App Password, not the normal Gmail password. Without an email provider, local/dev runs return the reset code for testing. On production, set `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
+Signup verification codes are stored hashed and expire after 10 minutes. Password reset codes are stored hashed and expire after 15 minutes. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` to send both signup and reset codes by email. For Gmail, use a Google App Password, not the normal Gmail password. Without an email provider, local/dev runs return the code for testing. On production, set `EMAIL_VERIFICATION_EXPOSE_CODE=true` or `PASSWORD_RESET_EXPOSE_CODE=true` only for classroom demos, not for real public accounts.
 
 ## API List
 
@@ -122,11 +123,21 @@ GET /api/stages/:level
 ### Auth
 
 ```http
+POST /api/auth/email-verification/request
 POST /api/auth/register
 POST /api/auth/login
 POST /api/auth/password-reset/request
 POST /api/auth/password-reset/confirm
 GET /api/auth/me
+```
+
+`POST /api/auth/email-verification/request` body:
+
+```json
+{
+  "email": "maker@example.com",
+  "nickname": "maker"
+}
 ```
 
 `POST /api/auth/register` body:
@@ -136,7 +147,8 @@ GET /api/auth/me
   "nickname": "maker",
   "email": "maker@example.com",
   "password": "secret123",
-  "confirmPassword": "secret123"
+  "confirmPassword": "secret123",
+  "verificationCode": "123456"
 }
 ```
 
@@ -389,6 +401,12 @@ ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-this-admin-password
 CLIENT_ORIGIN=https://habang2222.github.io
 CLIENT_URL=https://habang2222.github.io/Puzzle_Tower/
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-gmail-app-password
+SMTP_FROM=Puzzle Tower <your-email@gmail.com>
 ```
 
 Use new random values for `JWT_SECRET` and `ADMIN_TOKEN` if either value was ever shown in chat, browser screenshots, logs, or a public repository. Production startup rejects missing or weak `JWT_SECRET` values.
